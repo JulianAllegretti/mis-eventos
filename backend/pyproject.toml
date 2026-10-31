@@ -1,0 +1,97 @@
+[project]
+name = "mis-eventos-backend"
+version = "0.1.0"
+description = "API de Mis Eventos"
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "sqlmodel>=0.0.22",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "psycopg[binary]>=3.2.10",
+    "alembic>=1.14",
+    "pydantic-settings>=2.7",
+    "email-validator>=2.2",
+    "argon2-cffi>=23.1",
+    "pyjwt>=2.9",
+    "redis>=5.2",
+    "structlog>=24.4",
+    "prometheus-client>=0.21",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.25",
+    "pytest-cov>=6.0",
+    "httpx>=0.28",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "import-linter>=2.1",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra"
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["app/main.py"]
+
+[tool.ruff]
+line-length = 100
+# El runtime es 3.14, pero se formatea con sintaxis de 3.13: así ruff mantiene los paréntesis
+# en `except (A, B):` en vez de la forma sin paréntesis de PEP 758.
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ASYNC", "S"]
+ignore = ["B008"]  # Depends() en argumentos es el patrón de FastAPI
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106", "S107"]
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+plugins = ["pydantic.mypy"]
+
+# --- Reglas de arquitectura (ADR 0010) ---
+[tool.importlinter]
+root_package = "app"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "El dominio no depende de nada del proyecto ni de frameworks"
+type = "forbidden"
+source_modules = ["app.domain"]
+forbidden_modules = [
+    "app.application", "app.adapters", "app.bootstrap",
+    "fastapi", "starlette", "sqlmodel", "sqlalchemy", "redis", "pydantic", "structlog",
+]
+
+[[tool.importlinter.contracts]]
+name = "La aplicación solo depende del dominio"
+type = "forbidden"
+source_modules = ["app.application"]
+forbidden_modules = [
+    "app.adapters", "app.bootstrap",
+    "fastapi", "starlette", "sqlmodel", "sqlalchemy", "redis", "pydantic", "structlog",
+]
+
+[[tool.importlinter.contracts]]
+name = "Los adaptadores inbound y outbound son independientes"
+type = "independence"
+modules = ["app.adapters.inbound", "app.adapters.outbound"]
+
+[[tool.importlinter.contracts]]
+name = "Los adaptadores no conocen el bootstrap"
+type = "forbidden"
+source_modules = ["app.adapters"]
+forbidden_modules = ["app.bootstrap"]
