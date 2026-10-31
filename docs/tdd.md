@@ -327,7 +327,7 @@ Reglas que cruzan tablas y se validan en la aplicación (dentro de la transacci�
 - Un usuario no se inscribe a sesiones solapadas; se serializa por usuario con `pg_advisory_xact_lock(hashtext(user_id))` para cubrir el doble clic concurrente.
 - Cancelar una inscripción a un evento cancela también sus inscripciones a sesiones y libera esos cupos.
 
-Las claves foráneas usan `ON DELETE RESTRICT`. No se borran eventos con inscripciones (se cancelan) ni ponentes con sesiones.
+Las claves foráneas usan `ON DELETE RESTRICT`, salvo `sessions.event_id` y `session_registrations.session_id`, que usan `CASCADE`: borrar un evento (solo posible sin historial de inscripciones) se lleva sus sesiones. No se borran eventos con inscripciones (activas o canceladas; se cancelan) ni ponentes con sesiones (el caso de uso lo comprueba y la clave foránea lo garantiza).
 
 ---
 
@@ -344,7 +344,7 @@ Prefijo `/api/v1`. Documentación en `/docs` (Swagger) y `/openapi.json`. Esquem
 | `POST /auth/logout` | Autenticado | Borra la cookie |
 | `GET /auth/me` | Autenticado | Usuario de la sesión actual |
 | `GET /events` | Público | Lista paginada. Parámetros: `q` (nombre parcial), `page`, `page_size` (≤ 50), `status`, `scope=mine` (borradores propios, requiere sesión) |
-| `GET /events/{id}` | Público (borrador: dueño/admin) | Detalle con sesiones y ponentes |
+| `GET /events/{id}` | Público (borrador: dueño/admin) | Detalle del evento; su agenda con ponentes está en `GET /events/{id}/sessions` |
 | `POST /events` | `organizer`, `admin` | Crea un evento en `draft` |
 | `PATCH /events/{id}` | Dueño o `admin` | Edita datos |
 | `DELETE /events/{id}` | Dueño o `admin` | Borra un evento sin inscripciones |
@@ -394,31 +394,30 @@ Prefijo `/api/v1`. Documentación en `/docs` (Swagger) y `/openapi.json`. Esquem
 ```mermaid
 sequenceDiagram
     participant U as Usuario
-    participant H as HTTP adapter
     participant UC as RegisterToEventUseCase
     participant R as SlotCounter (Redis)
     participant DB as PostgreSQL
 
-    U->>H: POST /events/{id}/registrations
-    H->>UC: RegisterToEventCommand
-    UC->>R: try_acquire (Lua DECR si > 0)
-    alt sin cupo
-        R-->>UC: FULL
-        UC-->>H: EventFull
-        H-->>U: 409
-    else hay cupo (o Redis caído → BYPASSED)
-        R-->>UC: ALLOWED
-        UC->>DB: UPDATE events SET registered_count+1 WHERE registered_count < capacity AND status='published'
-        alt 0 filas
-            UC->>R: release (INCR)
-            UC-->>U: 409
-        else 1 fila
-            UC->>DB: INSERT registration (único parcial)
-            alt duplicado / error
+    U->>UC: POST /events/{id}/registrations
+    UC->>R: claim (SET NX, 10 s) por (evento, usuario)
+    alt intento duplicado en curso
+        R-->>UC: ya existe
+        UC-->>U: 409 already_registered (sin tocar el contador)
+    else primer intento
+        UC->>R: try_acquire (Lua: DECR si > 0)
+        alt contador en cero
+            R-->>UC: FULL
+            UC->>R: unclaim
+            UC-->>U: 409 event_full (PostgreSQL no se toca)
+        else hay cupo, o Redis caído (BYPASSED)
+            R-->>UC: ALLOWED
+            UC->>DB: INSERT registration (único parcial user+evento)
+            UC->>DB: UPDATE events SET registered_count+1 WHERE registered_count < capacity AND status='published' AND end_at >= now
+            alt 0 filas o error
                 UC->>DB: ROLLBACK
-                UC->>R: release (INCR)
-                UC-->>U: 409 / 5xx
-            else ok
+                UC->>R: release (INCR) + unclaim
+                UC-->>U: 409 event_full / 5xx
+            else 1 fila
                 UC->>DB: COMMIT
                 UC-->>U: 201
             end
@@ -426,13 +425,19 @@ sequenceDiagram
     end
 ```
 
+Garantías: **PostgreSQL decide siempre** (actualización condicional + restricción única), por lo que ningún fallo de Redis puede causar sobreventa. El `claim` evita un subventa: sin él, los clics dobles retienen cupo en Redis mientras están en vuelo y pueden provocar `event_full` a usuarios legítimos aunque quede lugar (se observó en pruebas con 25 usuarios × 2 clics sobre 4 cupos: se vendían 3). Cancelar una inscripción libera el cupo y el candado.
+
 ### 5.3 Cierre automático (ADR 0008)
 
-`finish_events_job` (adaptador inbound) llama cada `FINISH_JOB_INTERVAL_SECONDS` al caso de uso `FinishExpiredEvents`, que toma `pg_try_advisory_lock`, ejecuta el `UPDATE ... RETURNING id` con `closed_source='scheduler'`, invalida la caché y borra los contadores de Redis. Mientras no corra, el dominio considera `finished` a un evento publicado con `end_at < now()` (estado efectivo).
+`MaintenanceJob` (`adapters/inbound/jobs/maintenance_job.py`, iniciado en el `lifespan`) ejecuta cada `FINISH_JOB_INTERVAL_SECONDS` (0 lo desactiva) el caso de uso `FinishExpiredEvents`, que toma `pg_try_advisory_xact_lock` dentro de la transacción (así varios workers no duplican el trabajo), ejecuta el `UPDATE ... RETURNING id` con `closed_source='scheduler'`, invalida la caché y descarta los contadores de Redis. En el mismo ciclo corre `ReconcileSlots`, que corrige desvíos de los contadores existentes tomando a PostgreSQL como verdad. Un fallo de cualquiera se registra y se reintenta en el ciclo siguiente. Mientras no corra, el dominio considera `finished` a un evento publicado con `end_at < now()` (estado efectivo).
 
 ### 5.4 Creación de sesión
 
-El caso de uso carga el evento, verifica permisos (`permissions.py`), valida con `scheduling.py` (rango, capacidad, fin > inicio) y deja que la restricción `EXCLUDE` rechace solapes del ponente. La excepción de integridad que lanza el adaptador se traduce a `ScheduleConflict` (409).
+El caso de uso carga el evento, verifica permisos (`permissions.py`), valida con `scheduling.py` (rango, capacidad, fin > inicio) y deja que la restricción `EXCLUDE` rechace solapes del ponente (una comprobación previa da el mensaje amable; la restricción cubre la carrera entre dos creaciones simultáneas). La excepción de integridad que lanza el adaptador se traduce a `ScheduleConflict` (409). Una sesión con inscritos no puede cambiar de horario ni de ponente, y editar un evento no puede dejar sesiones fuera de su nuevo horario o con más capacidad que él.
+
+### 5.5 Inscripción a una sesión
+
+Exige una inscripción activa al evento, serializa por usuario con `pg_advisory_xact_lock` (dos clics simultáneos a sesiones solapadas no pasan ambos), valida que no haya solapes con sus otras sesiones y toma el cupo con una actualización condicional sobre `sessions.registered_count`. Cancelar la inscripción al evento cancela también las de sus sesiones.
 
 ---
 

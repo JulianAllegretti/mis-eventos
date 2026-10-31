@@ -55,7 +55,7 @@ Fuente: `docs/prd.pdf`. Este documento fija las reglas de negocio y resuelve los
 ### 3.5 Inscripciones
 - Un usuario autenticado se inscribe a un evento `published` si hay cupo.
 - Una sola inscripción activa por usuario y evento (restricción única).
-- El control de cupo es atómico: un filtro previo en Redis (contador con script Lua) rechaza rápido cuando no hay cupo, y PostgreSQL decide de forma definitiva con una actualización condicional y la restricción única. Con dos usuarios compitiendo por el último cupo, solo uno se inscribe y el otro recibe 409 (ver ADR 0005).
+- El control de cupo es atómico: un filtro previo en Redis (contador con script Lua) rechaza rápido cuando no hay cupo, y PostgreSQL decide de forma definitiva con una actualización condicional y la restricción única. Con dos usuarios compitiendo por el último cupo, solo uno se inscribe y el otro recibe 409 (ver ADR 0005). Los clics dobles del mismo usuario se colapsan: una sola inscripción y el resto responde 409 `already_registered`.
 - **[S]** El usuario puede cancelar su inscripción (libera cupo y sus inscripciones a sesiones de ese evento).
 - Perfil: lista de eventos en los que el usuario está inscrito.
 
