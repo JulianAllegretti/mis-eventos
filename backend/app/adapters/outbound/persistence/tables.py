@@ -66,3 +66,52 @@ class EventTable(SQLModel, table=True):
     closed_source: str | None = Field(default=None, sa_column=Column(String(20), nullable=True))
     created_at: datetime = Field(sa_column=_timestamptz())
     updated_at: datetime = Field(sa_column=_timestamptz())
+
+
+class SessionTable(SQLModel, table=True):
+    __tablename__ = "sessions"
+
+    id: UUID = Field(primary_key=True)
+    event_id: UUID = Field(
+        sa_column=Column(ForeignKey("events.id", ondelete="CASCADE"), nullable=False)
+    )
+    speaker_id: UUID = Field(
+        sa_column=Column(ForeignKey("speakers.id", ondelete="RESTRICT"), nullable=False)
+    )
+    title: str = Field(sa_column=Column(String(200), nullable=False))
+    description: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    start_at: datetime = Field(sa_column=_timestamptz())
+    end_at: datetime = Field(sa_column=_timestamptz())
+    capacity: int = Field(sa_column=Column(Integer, nullable=False))
+    registered_count: int = Field(
+        default=0, sa_column=Column(Integer, nullable=False, server_default="0")
+    )
+    created_at: datetime = Field(sa_column=_timestamptz())
+
+
+class RegistrationTable(SQLModel, table=True):
+    __tablename__ = "registrations"
+
+    id: UUID = Field(primary_key=True)
+    user_id: UUID = Field(
+        sa_column=Column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    )
+    event_id: UUID = Field(
+        sa_column=Column(ForeignKey("events.id", ondelete="RESTRICT"), nullable=False)
+    )
+    created_at: datetime = Field(sa_column=_timestamptz())
+    cancelled_at: datetime | None = Field(default=None, sa_column=_timestamptz(nullable=True))
+
+
+class SessionRegistrationTable(SQLModel, table=True):
+    __tablename__ = "session_registrations"
+
+    id: UUID = Field(primary_key=True)
+    user_id: UUID = Field(
+        sa_column=Column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    )
+    session_id: UUID = Field(
+        sa_column=Column(ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False)
+    )
+    created_at: datetime = Field(sa_column=_timestamptz())
+    cancelled_at: datetime | None = Field(default=None, sa_column=_timestamptz(nullable=True))

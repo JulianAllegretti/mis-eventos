@@ -45,6 +45,26 @@ class InvalidTransition(Conflict):
     default_message = "La operación no es válida para el estado actual del evento"
 
 
+class ScheduleConflict(Conflict):
+    code = "schedule_conflict"
+    default_message = "El horario se solapa con otra sesión"
+
+
+class EventFull(Conflict):
+    code = "event_full"
+    default_message = "El evento no tiene cupos disponibles"
+
+
+class SessionFull(Conflict):
+    code = "session_full"
+    default_message = "La sesión no tiene cupos disponibles"
+
+
+class AlreadyRegistered(Conflict):
+    code = "already_registered"
+    default_message = "Ya estás inscrito"
+
+
 class ValidationFailed(DomainError):
     code = "validation_failed"
     default_message = "Datos inválidos"

@@ -6,6 +6,7 @@ from fastapi import FastAPI
 
 from app.adapters.inbound.http.app_factory import build_http_app
 from app.adapters.inbound.http.config import HttpConfig
+from app.adapters.inbound.jobs.maintenance_job import MaintenanceJob
 from app.adapters.outbound.observability.logging import configure_logging
 from app.bootstrap.container import Container, build_container
 from app.bootstrap.settings import Settings
@@ -29,9 +30,17 @@ def create_app(settings: Settings | None = None, container: Container | None = N
                 settings.admin_email, settings.admin_password
             )
             log.info("admin_seed", created=created)
+
+        job = MaintenanceJob(
+            active.finish_expired_events,
+            active.reconcile_slots,
+            settings.finish_job_interval_seconds if owned else 0,
+        )
+        job.start()
         try:
             yield
         finally:
+            await job.stop()
             if owned:
                 await active.aclose()
 

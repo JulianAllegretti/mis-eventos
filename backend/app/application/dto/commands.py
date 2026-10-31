@@ -81,3 +81,33 @@ class UpdateUserCommand:
     actor: User
     user_id: UUID
     changes: Mapping[str, Any]  # claves permitidas: role, is_active
+
+
+# --- Sesiones de agenda ---
+
+
+@dataclass(frozen=True, slots=True)
+class CreateSessionCommand:
+    actor: User
+    event_id: UUID
+    speaker_id: UUID
+    title: str
+    description: str | None
+    start_at: datetime
+    end_at: datetime
+    capacity: int
+
+
+@dataclass(frozen=True, slots=True)
+class UpdateSessionCommand:
+    actor: User
+    session_id: UUID
+    changes: Mapping[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class SessionActionCommand:
+    """Borrar una sesión o inscribirse / cancelar la inscripción a ella."""
+
+    actor: User
+    session_id: UUID

@@ -4,6 +4,9 @@ from typing import Protocol, Self
 
 from app.application.ports.outbound.repositories import (
     EventRepository,
+    RegistrationRepository,
+    SessionRegistrationRepository,
+    SessionRepository,
     SpeakerRepository,
     UserRepository,
 )
@@ -20,6 +23,15 @@ class UnitOfWork(Protocol):
 
     @property
     def speakers(self) -> SpeakerRepository: ...
+
+    @property
+    def sessions(self) -> SessionRepository: ...
+
+    @property
+    def registrations(self) -> RegistrationRepository: ...
+
+    @property
+    def session_registrations(self) -> SessionRegistrationRepository: ...
 
     async def __aenter__(self) -> Self: ...
 

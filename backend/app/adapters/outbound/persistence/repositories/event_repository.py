@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import ColumnElement, and_, func, or_
+from sqlalchemy import ColumnElement, and_, func, or_, text, update
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -13,7 +13,10 @@ from app.adapters.outbound.persistence.mappers import (
 from app.adapters.outbound.persistence.sql_utils import LIKE_ESCAPE, contains_pattern
 from app.adapters.outbound.persistence.tables import EventTable
 from app.application.dto.queries import EventSearchCriteria
-from app.domain.models.event import Event, EventStatus
+from app.domain.models.event import ClosedSource, Event, EventStatus
+
+# Clave del advisory lock que evita que varios workers ejecuten el cierre automático a la vez.
+_FINISH_JOB_LOCK_KEY = 7_204_001
 
 
 class SqlEventRepository:
@@ -56,6 +59,66 @@ class SqlEventRepository:
             .offset(criteria.offset)
         )
         return [event_to_domain(r) for r in rows], total
+
+    async def try_increment_registered(self, event_id: UUID, now: datetime) -> bool:
+        """Toma un cupo con una sola sentencia atómica: no hay ventana entre leer y escribir."""
+        connection = await self._session.connection()
+        result = await connection.execute(
+            update(EventTable)
+            .where(
+                col(EventTable.id) == event_id,
+                col(EventTable.registered_count) < col(EventTable.capacity),
+                col(EventTable.status) == EventStatus.PUBLISHED.value,
+                col(EventTable.end_at) >= now,
+            )
+            .values(registered_count=col(EventTable.registered_count) + 1)
+        )
+        return result.rowcount == 1
+
+    async def decrement_registered(self, event_id: UUID) -> None:
+        connection = await self._session.connection()
+        await connection.execute(
+            update(EventTable)
+            .where(col(EventTable.id) == event_id, col(EventTable.registered_count) > 0)
+            .values(registered_count=col(EventTable.registered_count) - 1)
+        )
+
+    async def finish_expired(self, now: datetime) -> list[UUID]:
+        connection = await self._session.connection()
+        locked = (
+            await connection.execute(
+                text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": _FINISH_JOB_LOCK_KEY}
+            )
+        ).scalar_one()
+        if not locked:
+            return []  # otro worker ya está ejecutando el cierre
+        result = await connection.execute(
+            update(EventTable)
+            .where(
+                col(EventTable.status) == EventStatus.PUBLISHED.value,
+                col(EventTable.end_at) < now,
+            )
+            .values(
+                status=EventStatus.FINISHED.value,
+                closed_at=now,
+                closed_by_id=None,
+                closed_source=ClosedSource.SCHEDULER.value,
+                updated_at=now,
+            )
+            .returning(col(EventTable.id))
+        )
+        return [row[0] for row in result]
+
+    async def list_open_availability(self, now: datetime) -> list[tuple[UUID, int]]:
+        rows = await self._session.exec(
+            select(
+                col(EventTable.id), col(EventTable.capacity) - col(EventTable.registered_count)
+            ).where(
+                col(EventTable.status) == EventStatus.PUBLISHED.value,
+                col(EventTable.end_at) >= now,
+            )
+        )
+        return [(event_id, available) for event_id, available in rows]
 
     @staticmethod
     def _conditions(criteria: EventSearchCriteria) -> list[ColumnElement[bool]]:

@@ -13,6 +13,7 @@ from alembic.config import Config
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
 
+from app.adapters.outbound.cache.redis_client import create_redis
 from app.adapters.outbound.persistence.database import create_engine, create_session_factory
 from app.adapters.outbound.persistence.unit_of_work import SqlUnitOfWork
 
@@ -57,7 +58,12 @@ def migrated_database(database_url: str):
 async def engine(migrated_database: str):
     engine = create_engine(migrated_database)
     async with engine.begin() as connection:
-        await connection.execute(text("TRUNCATE events, speakers, users CASCADE"))
+        await connection.execute(
+            text(
+                "TRUNCATE session_registrations, registrations, sessions, events, "
+                "speakers, users CASCADE"
+            )
+        )
     yield engine
     await engine.dispose()
 
@@ -66,3 +72,16 @@ async def engine(migrated_database: str):
 def uow_factory(engine):
     session_factory = create_session_factory(engine)
     return lambda: SqlUnitOfWork(session_factory)
+
+
+@pytest.fixture
+async def redis_client():
+    """Redis real en una base exclusiva para pruebas (se vacía antes y después)."""
+    url = os.environ.get("TEST_REDIS_URL")
+    if not url:
+        pytest.skip("TEST_REDIS_URL no está definida: se omiten las pruebas con Redis")
+    client = create_redis(url)
+    await client.flushdb()
+    yield client
+    await client.flushdb()
+    await client.aclose()

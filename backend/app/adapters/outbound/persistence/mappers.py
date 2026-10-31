@@ -1,7 +1,16 @@
 """Traducción entre filas de tabla y entidades de dominio."""
 
-from app.adapters.outbound.persistence.tables import EventTable, SpeakerTable, UserTable
+from app.adapters.outbound.persistence.tables import (
+    EventTable,
+    RegistrationTable,
+    SessionRegistrationTable,
+    SessionTable,
+    SpeakerTable,
+    UserTable,
+)
 from app.domain.models.event import ClosedSource, Event, EventStatus
+from app.domain.models.registration import Registration, SessionRegistration
+from app.domain.models.session import Session
 from app.domain.models.speaker import Speaker
 from app.domain.models.user import Role, User
 
@@ -105,4 +114,74 @@ def event_to_table(event: Event) -> EventTable:
         closed_source=event.closed_source.value if event.closed_source else None,
         created_at=event.created_at,
         updated_at=event.updated_at,
+    )
+
+
+def session_to_domain(row: SessionTable) -> Session:
+    return Session(
+        id=row.id,
+        event_id=row.event_id,
+        speaker_id=row.speaker_id,
+        title=row.title,
+        description=row.description,
+        start_at=row.start_at,
+        end_at=row.end_at,
+        capacity=row.capacity,
+        registered_count=row.registered_count,
+        created_at=row.created_at,
+    )
+
+
+def session_to_table(session: Session) -> SessionTable:
+    return SessionTable(
+        id=session.id,
+        event_id=session.event_id,
+        speaker_id=session.speaker_id,
+        title=session.title,
+        description=session.description,
+        start_at=session.start_at,
+        end_at=session.end_at,
+        capacity=session.capacity,
+        registered_count=session.registered_count,
+        created_at=session.created_at,
+    )
+
+
+def registration_to_domain(row: RegistrationTable) -> Registration:
+    return Registration(
+        id=row.id,
+        user_id=row.user_id,
+        event_id=row.event_id,
+        created_at=row.created_at,
+        cancelled_at=row.cancelled_at,
+    )
+
+
+def registration_to_table(registration: Registration) -> RegistrationTable:
+    return RegistrationTable(
+        id=registration.id,
+        user_id=registration.user_id,
+        event_id=registration.event_id,
+        created_at=registration.created_at,
+        cancelled_at=registration.cancelled_at,
+    )
+
+
+def session_registration_to_domain(row: SessionRegistrationTable) -> SessionRegistration:
+    return SessionRegistration(
+        id=row.id,
+        user_id=row.user_id,
+        session_id=row.session_id,
+        created_at=row.created_at,
+        cancelled_at=row.cancelled_at,
+    )
+
+
+def session_registration_to_table(registration: SessionRegistration) -> SessionRegistrationTable:
+    return SessionRegistrationTable(
+        id=registration.id,
+        user_id=registration.user_id,
+        session_id=registration.session_id,
+        created_at=registration.created_at,
+        cancelled_at=registration.cancelled_at,
     )

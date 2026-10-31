@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     database_url: str
-    redis_url: str = "redis://localhost:6379/0"
+    redis_url: str = "redis://localhost:6379/0"  # vacío = sin Redis (solo PostgreSQL)
     jwt_secret: str = Field(min_length=32)
     jwt_expire_minutes: int = Field(default=60, ge=1)
     cookie_secure: bool = True
@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     ]
     admin_email: str | None = None
     admin_password: str | None = None
+    cache_ttl_seconds: int = Field(default=60, ge=1)
+    # Intervalo de la tarea de cierre automático y reconciliación de cupos; 0 la desactiva.
+    finish_job_interval_seconds: float = Field(default=60, ge=0)
     log_level: str = "INFO"
 
     @field_validator("allowed_origins", mode="before")

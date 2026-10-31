@@ -5,6 +5,11 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.adapters.outbound.persistence.repositories.event_repository import SqlEventRepository
+from app.adapters.outbound.persistence.repositories.registration_repository import (
+    SqlRegistrationRepository,
+    SqlSessionRegistrationRepository,
+)
+from app.adapters.outbound.persistence.repositories.session_repository import SqlSessionRepository
 from app.adapters.outbound.persistence.repositories.speaker_repository import SqlSpeakerRepository
 from app.adapters.outbound.persistence.repositories.user_repository import SqlUserRepository
 
@@ -19,6 +24,9 @@ class SqlUnitOfWork:
         self.users = SqlUserRepository(self._session)
         self.events = SqlEventRepository(self._session)
         self.speakers = SqlSpeakerRepository(self._session)
+        self.sessions = SqlSessionRepository(self._session)
+        self.registrations = SqlRegistrationRepository(self._session)
+        self.session_registrations = SqlSessionRegistrationRepository(self._session)
         return self
 
     async def __aexit__(

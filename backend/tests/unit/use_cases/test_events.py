@@ -4,6 +4,7 @@ import pytest
 
 from app.application.dto.commands import CreateEventCommand, EventActionCommand, UpdateEventCommand
 from app.application.dto.queries import GetEventQuery, SearchEventsQuery
+from app.application.services.event_sync import EventSync
 from app.application.use_cases.events.change_event_status import (
     CancelEventUseCase,
     FinishEventUseCase,
@@ -18,7 +19,13 @@ from app.domain.errors import Conflict, Forbidden, InvalidTransition, NotFound, 
 from app.domain.models.event import EventStatus
 from app.domain.models.user import Role
 from tests.factories import make_event, make_user
-from tests.fakes.in_memory import FIXED_NOW, FixedClock, make_uow_factory
+from tests.fakes.in_memory import (
+    FIXED_NOW,
+    FakeCache,
+    FakeSlotCounter,
+    FixedClock,
+    make_uow_factory,
+)
 
 
 @pytest.fixture
@@ -34,6 +41,16 @@ def uow_factory(events):
 @pytest.fixture
 def clock():
     return FixedClock()
+
+
+@pytest.fixture
+def cache():
+    return FakeCache()
+
+
+@pytest.fixture
+def sync(cache):
+    return EventSync(cache, FakeSlotCounter())
 
 
 def _create_cmd(actor, **overrides):
@@ -74,12 +91,12 @@ class TestCreateEvent:
 
 
 class TestUpdateEvent:
-    async def test_owner_updates_only_the_given_fields(self, uow_factory, clock, events):
+    async def test_owner_updates_only_the_given_fields(self, uow_factory, clock, events, sync):
         owner = make_user(Role.ORGANIZER)
         event = make_event(owner.id)
         events[event.id] = event
 
-        updated = await UpdateEventUseCase(uow_factory, clock).execute(
+        updated = await UpdateEventUseCase(uow_factory, clock, sync).execute(
             UpdateEventCommand(actor=owner, event_id=event.id, changes={"name": "  Nuevo  "})
         )
 
@@ -88,32 +105,32 @@ class TestUpdateEvent:
         assert updated.capacity == 100
 
     async def test_description_can_be_cleared_but_name_cannot_be_null(
-        self, uow_factory, clock, events
+        self, uow_factory, clock, events, sync
     ):
         owner = make_user(Role.ORGANIZER)
         event = make_event(owner.id)
         events[event.id] = event
-        use_case = UpdateEventUseCase(uow_factory, clock)
+        use_case = UpdateEventUseCase(uow_factory, clock, sync)
 
         cleared = await use_case.execute(UpdateEventCommand(owner, event.id, {"description": None}))
         assert cleared.description is None
         with pytest.raises(ValidationFailed):
             await use_case.execute(UpdateEventCommand(owner, event.id, {"name": None}))
 
-    async def test_rejects_unknown_fields(self, uow_factory, clock, events):
+    async def test_rejects_unknown_fields(self, uow_factory, clock, events, sync):
         owner = make_user(Role.ORGANIZER)
         event = make_event(owner.id)
         events[event.id] = event
         with pytest.raises(ValidationFailed):
-            await UpdateEventUseCase(uow_factory, clock).execute(
+            await UpdateEventUseCase(uow_factory, clock, sync).execute(
                 UpdateEventCommand(owner, event.id, {"organizer_id": "x", "registered_count": 0})
             )
 
-    async def test_capacity_cannot_go_below_registered(self, uow_factory, clock, events):
+    async def test_capacity_cannot_go_below_registered(self, uow_factory, clock, events, sync):
         owner = make_user(Role.ORGANIZER)
         event = make_event(owner.id, status=EventStatus.PUBLISHED, capacity=50, registered=20)
         events[event.id] = event
-        use_case = UpdateEventUseCase(uow_factory, clock)
+        use_case = UpdateEventUseCase(uow_factory, clock, sync)
 
         with pytest.raises(ValidationFailed):
             await use_case.execute(UpdateEventCommand(owner, event.id, {"capacity": 19}))
@@ -121,11 +138,13 @@ class TestUpdateEvent:
             await use_case.execute(UpdateEventCommand(owner, event.id, {"capacity": 20}))
         ).capacity == 20
 
-    async def test_other_organizer_is_forbidden_and_admin_allowed(self, uow_factory, clock, events):
+    async def test_other_organizer_is_forbidden_and_admin_allowed(
+        self, uow_factory, clock, events, sync
+    ):
         owner = make_user(Role.ORGANIZER)
         event = make_event(owner.id, status=EventStatus.PUBLISHED)
         events[event.id] = event
-        use_case = UpdateEventUseCase(uow_factory, clock)
+        use_case = UpdateEventUseCase(uow_factory, clock, sync)
         change = {"location": "Medellín"}
 
         with pytest.raises(Forbidden):
@@ -133,44 +152,48 @@ class TestUpdateEvent:
         result = await use_case.execute(UpdateEventCommand(make_user(Role.ADMIN), event.id, change))
         assert result.location == "Medellín"
 
-    async def test_foreign_draft_looks_nonexistent(self, uow_factory, clock, events):
+    async def test_foreign_draft_looks_nonexistent(self, uow_factory, clock, events, sync):
         event = make_event(make_user(Role.ORGANIZER).id)  # borrador de otro
         events[event.id] = event
         with pytest.raises(NotFound):
-            await UpdateEventUseCase(uow_factory, clock).execute(
+            await UpdateEventUseCase(uow_factory, clock, sync).execute(
                 UpdateEventCommand(make_user(Role.ORGANIZER), event.id, {"name": "X"})
             )
 
     @pytest.mark.parametrize("status", [EventStatus.FINISHED, EventStatus.CANCELLED])
-    async def test_closed_events_are_not_editable(self, uow_factory, clock, events, status):
+    async def test_closed_events_are_not_editable(self, uow_factory, clock, events, status, sync):
         owner = make_user(Role.ORGANIZER)
         event = make_event(owner.id, status=status)
         events[event.id] = event
         with pytest.raises(InvalidTransition):
-            await UpdateEventUseCase(uow_factory, clock).execute(
+            await UpdateEventUseCase(uow_factory, clock, sync).execute(
                 UpdateEventCommand(owner, event.id, {"name": "X"})
             )
 
 
 class TestGetAndSearch:
-    async def test_get_returns_effective_status(self, uow_factory, clock, events):
+    async def test_get_returns_effective_status(self, uow_factory, clock, events, cache):
         event = make_event(
             make_user(Role.ORGANIZER).id, status=EventStatus.PUBLISHED, starts_in=-timedelta(days=3)
         )
         events[event.id] = event
 
-        result = await GetEventUseCase(uow_factory, clock).execute(GetEventQuery(None, event.id))
+        result = await GetEventUseCase(uow_factory, clock, cache, 60).execute(
+            GetEventQuery(None, event.id)
+        )
 
         assert result.status is EventStatus.FINISHED
 
-    async def test_anonymous_cannot_get_a_draft(self, uow_factory, clock, events):
+    async def test_anonymous_cannot_get_a_draft(self, uow_factory, clock, events, cache):
         event = make_event(make_user(Role.ORGANIZER).id)
         events[event.id] = event
         with pytest.raises(NotFound):
-            await GetEventUseCase(uow_factory, clock).execute(GetEventQuery(None, event.id))
+            await GetEventUseCase(uow_factory, clock, cache, 60).execute(
+                GetEventQuery(None, event.id)
+            )
 
     async def test_search_hides_drafts_and_matches_part_of_the_name_ignoring_case(
-        self, uow_factory, clock, events
+        self, uow_factory, clock, events, cache
     ):
         owner = make_user(Role.ORGANIZER)
         for name, status in (
@@ -182,7 +205,7 @@ class TestGetAndSearch:
             event = make_event(owner.id, name=name, status=status)
             events[event.id] = event
 
-        page = await SearchEventsUseCase(uow_factory, clock).execute(
+        page = await SearchEventsUseCase(uow_factory, clock, cache, 60).execute(
             SearchEventsQuery(viewer=None, q="python")
         )
 
@@ -192,19 +215,19 @@ class TestGetAndSearch:
         ]
         assert page.total == 2
 
-    async def test_mine_includes_own_drafts_only(self, uow_factory, clock, events):
+    async def test_mine_includes_own_drafts_only(self, uow_factory, clock, events, cache):
         me, other = make_user(Role.ORGANIZER), make_user(Role.ORGANIZER)
         mine = make_event(me.id, name="Mi borrador")
         theirs = make_event(other.id, name="Borrador ajeno")
         events.update({mine.id: mine, theirs.id: theirs})
 
-        page = await SearchEventsUseCase(uow_factory, clock).execute(
+        page = await SearchEventsUseCase(uow_factory, clock, cache, 60).execute(
             SearchEventsQuery(viewer=me, mine=True)
         )
 
         assert [e.name for e in page.items] == ["Mi borrador"]
 
-    async def test_pagination_and_ordering_by_start(self, uow_factory, clock, events):
+    async def test_pagination_and_ordering_by_start(self, uow_factory, clock, events, cache):
         owner = make_user(Role.ORGANIZER)
         for days in (3, 1, 2):
             event = make_event(
@@ -214,7 +237,7 @@ class TestGetAndSearch:
                 starts_in=timedelta(days=days),
             )
             events[event.id] = event
-        search = SearchEventsUseCase(uow_factory, clock)
+        search = SearchEventsUseCase(uow_factory, clock, cache, 60)
 
         first = await search.execute(SearchEventsQuery(None, page=1, page_size=2))
         second = await search.execute(SearchEventsQuery(None, page=2, page_size=2))
@@ -223,14 +246,14 @@ class TestGetAndSearch:
         assert [e.name for e in second.items] == ["E3"]
         assert first.total == second.total == 3
 
-    async def test_status_filter_uses_effective_status(self, uow_factory, clock, events):
+    async def test_status_filter_uses_effective_status(self, uow_factory, clock, events, cache):
         owner = make_user(Role.ORGANIZER)
         expired = make_event(
             owner.id, name="Vencido", status=EventStatus.PUBLISHED, starts_in=-timedelta(days=2)
         )
         live = make_event(owner.id, name="Vigente", status=EventStatus.PUBLISHED)
         events.update({expired.id: expired, live.id: live})
-        search = SearchEventsUseCase(uow_factory, clock)
+        search = SearchEventsUseCase(uow_factory, clock, cache, 60)
 
         finished = await search.execute(SearchEventsQuery(None, status=EventStatus.FINISHED))
         published = await search.execute(SearchEventsQuery(None, status=EventStatus.PUBLISHED))
@@ -248,46 +271,46 @@ class TestGetAndSearch:
             SearchEventsQuery(None, q="x" * 101),
         ],
     )
-    async def test_invalid_queries_are_rejected(self, uow_factory, clock, query):
+    async def test_invalid_queries_are_rejected(self, uow_factory, clock, query, cache):
         with pytest.raises(ValidationFailed):
-            await SearchEventsUseCase(uow_factory, clock).execute(query)
+            await SearchEventsUseCase(uow_factory, clock, cache, 60).execute(query)
 
 
 class TestStatusChangesAndDelete:
-    async def test_publish_then_finish_then_no_more_changes(self, uow_factory, clock, events):
+    async def test_publish_then_finish_then_no_more_changes(self, uow_factory, clock, events, sync):
         owner = make_user(Role.ORGANIZER)
         event = make_event(owner.id)
         events[event.id] = event
         cmd = EventActionCommand(owner, event.id)
 
         assert (
-            await PublishEventUseCase(uow_factory, clock).execute(cmd)
+            await PublishEventUseCase(uow_factory, clock, sync).execute(cmd)
         ).status is EventStatus.PUBLISHED
-        finished = await FinishEventUseCase(uow_factory, clock).execute(cmd)
+        finished = await FinishEventUseCase(uow_factory, clock, sync).execute(cmd)
         assert finished.status is EventStatus.FINISHED
         assert finished.closed_by_id == owner.id
         with pytest.raises(InvalidTransition):
-            await CancelEventUseCase(uow_factory, clock).execute(cmd)
+            await CancelEventUseCase(uow_factory, clock, sync).execute(cmd)
 
-    async def test_non_owner_cannot_change_status(self, uow_factory, clock, events):
+    async def test_non_owner_cannot_change_status(self, uow_factory, clock, events, sync):
         event = make_event(make_user(Role.ORGANIZER).id, status=EventStatus.PUBLISHED)
         events[event.id] = event
         with pytest.raises(Forbidden):
-            await CancelEventUseCase(uow_factory, clock).execute(
+            await CancelEventUseCase(uow_factory, clock, sync).execute(
                 EventActionCommand(make_user(Role.ORGANIZER), event.id)
             )
 
-    async def test_delete_removes_an_event_without_registrations(self, uow_factory, events):
+    async def test_delete_removes_an_event_without_registrations(self, uow_factory, events, sync):
         owner = make_user(Role.ORGANIZER)
         event = make_event(owner.id)
         events[event.id] = event
-        await DeleteEventUseCase(uow_factory).execute(EventActionCommand(owner, event.id))
+        await DeleteEventUseCase(uow_factory, sync).execute(EventActionCommand(owner, event.id))
         assert events == {}
 
-    async def test_delete_is_refused_when_there_are_registrations(self, uow_factory, events):
+    async def test_delete_is_refused_when_there_are_registrations(self, uow_factory, events, sync):
         owner = make_user(Role.ORGANIZER)
         event = make_event(owner.id, status=EventStatus.PUBLISHED, registered=3)
         events[event.id] = event
         with pytest.raises(Conflict):
-            await DeleteEventUseCase(uow_factory).execute(EventActionCommand(owner, event.id))
+            await DeleteEventUseCase(uow_factory, sync).execute(EventActionCommand(owner, event.id))
         assert event.id in events

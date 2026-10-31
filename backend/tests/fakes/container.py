@@ -5,11 +5,14 @@ from app.domain.models.event import Event
 from app.domain.models.speaker import Speaker
 from app.domain.models.user import User
 from tests.fakes.in_memory import (
+    FakeCache,
     FakePasswordHasher,
+    FakeSlotCounter,
     FakeTokenService,
     FixedClock,
     StaticProbe,
-    make_uow_factory,
+    Stores,
+    make_stores,
 )
 
 
@@ -18,16 +21,24 @@ def build_fake_container(
     events_store: dict[UUID, Event] | None = None,
     speakers_store: dict[UUID, Speaker] | None = None,
     *,
+    stores: Stores | None = None,
     clock: FixedClock | None = None,
+    slots: FakeSlotCounter | None = None,
+    cache: FakeCache | None = None,
     postgres_ok: bool = True,
     redis_ok: bool = True,
 ) -> Container:
-    users = users_store if users_store is not None else {}
+    shared = stores or make_stores(users_store, events_store, speakers_store)
     probes = [StaticProbe("postgres", postgres_ok, True), StaticProbe("redis", redis_ok, False)]
+    # Importación local para no crear un ciclo con in_memory.
+    from tests.fakes.in_memory import InMemoryUnitOfWork
+
     return wire_use_cases(
-        uow_factory=make_uow_factory(users, events_store, speakers_store),
+        uow_factory=lambda: InMemoryUnitOfWork(shared),
         clock=clock or FixedClock(),
         hasher=FakePasswordHasher(),
         tokens=FakeTokenService(),
         probes=probes,
+        slots=slots or FakeSlotCounter(),
+        cache=cache or FakeCache(),
     )

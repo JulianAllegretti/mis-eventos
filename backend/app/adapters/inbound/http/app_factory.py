@@ -9,7 +9,15 @@ from app.adapters.inbound.http.config import HttpConfig
 from app.adapters.inbound.http.error_handlers import register_error_handlers
 from app.adapters.inbound.http.middleware.origin_check import OriginCheckMiddleware
 from app.adapters.inbound.http.middleware.request_context import RequestContextMiddleware
-from app.adapters.inbound.http.routers import admin, auth, events, health, speakers
+from app.adapters.inbound.http.routers import (
+    admin,
+    auth,
+    events,
+    health,
+    registrations,
+    sessions,
+    speakers,
+)
 
 API_PREFIX = "/api/v1"
 
@@ -48,5 +56,7 @@ def build_http_app(
     app.include_router(auth.router, prefix=API_PREFIX)
     app.include_router(events.router, prefix=API_PREFIX)
     app.include_router(speakers.router, prefix=API_PREFIX)
+    app.include_router(sessions.router, prefix=API_PREFIX)
+    app.include_router(registrations.router, prefix=API_PREFIX)
     app.include_router(admin.router, prefix=API_PREFIX)
     return app

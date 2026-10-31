@@ -57,3 +57,22 @@ class ListUsersQuery:
     q: str | None = None
     page: int = 1
     page_size: int = 20
+
+
+@dataclass(frozen=True, slots=True)
+class ListEventSessionsQuery:
+    viewer: User | None
+    event_id: UUID
+
+
+@dataclass(frozen=True, slots=True)
+class ListMyRegistrationsQuery:
+    user: User
+
+
+@dataclass(frozen=True, slots=True)
+class ListAttendeesQuery:
+    actor: User
+    event_id: UUID
+    page: int = 1
+    page_size: int = 20

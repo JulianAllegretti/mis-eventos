@@ -18,6 +18,20 @@ from app.application.ports.inbound.events import (
     UpdateEvent,
 )
 from app.application.ports.inbound.health import CheckReadiness
+from app.application.ports.inbound.registrations import (
+    CancelEventRegistration,
+    CancelSessionRegistration,
+    ListEventAttendees,
+    ListMyRegistrations,
+    RegisterToEvent,
+    RegisterToSession,
+)
+from app.application.ports.inbound.sessions import (
+    CreateSession,
+    DeleteSession,
+    ListEventSessions,
+    UpdateSession,
+)
 from app.application.ports.inbound.speakers import (
     CreateSpeaker,
     DeleteSpeaker,
@@ -52,6 +66,16 @@ class AppContainer(Protocol):
     list_speakers: ListSpeakers
     list_users: ListUsers
     update_user: UpdateUser
+    create_session: CreateSession
+    update_session: UpdateSession
+    delete_session: DeleteSession
+    list_event_sessions: ListEventSessions
+    register_to_event: RegisterToEvent
+    cancel_event_registration: CancelEventRegistration
+    list_my_registrations: ListMyRegistrations
+    list_event_attendees: ListEventAttendees
+    register_to_session: RegisterToSession
+    cancel_session_registration: CancelSessionRegistration
 
 
 # Declara el esquema de seguridad (cookie) en OpenAPI/Swagger.

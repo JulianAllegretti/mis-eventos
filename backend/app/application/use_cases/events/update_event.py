@@ -1,20 +1,23 @@
 from app.application.dto.commands import UpdateEventCommand
 from app.application.ports.outbound.clock import Clock
 from app.application.ports.outbound.unit_of_work import UnitOfWorkFactory
+from app.application.services.event_sync import EventSync
 from app.application.use_cases.events._access import load_managed_event
 from app.domain.errors import ValidationFailed
 from app.domain.models.event import Event
 from app.domain.services.event_lifecycle import ensure_editable
 from app.domain.services.event_rules import EventData, validate_event_data
+from app.domain.services.scheduling import validate_sessions_fit_event
 
 _UPDATABLE = frozenset({"name", "description", "location", "start_at", "end_at", "capacity"})
 _NOT_NULLABLE = _UPDATABLE - {"description"}
 
 
 class UpdateEventUseCase:
-    def __init__(self, uow_factory: UnitOfWorkFactory, clock: Clock) -> None:
+    def __init__(self, uow_factory: UnitOfWorkFactory, clock: Clock, sync: EventSync) -> None:
         self._uow_factory = uow_factory
         self._clock = clock
+        self._sync = sync
 
     async def execute(self, cmd: UpdateEventCommand) -> Event:
         unknown = set(cmd.changes) - _UPDATABLE
@@ -44,6 +47,13 @@ class UpdateEventUseCase:
                 require_future_start=False,
                 min_capacity=max(1, event.registered_count),
             )
+            # Las sesiones deben seguir cabiendo en el nuevo horario y capacidad.
+            validate_sessions_fit_event(
+                await uow.sessions.list_for_event(event.id),
+                start_at=data.start_at,
+                end_at=data.end_at,
+                capacity=data.capacity,
+            )
 
             event.name = data.name
             event.description = data.description
@@ -54,6 +64,7 @@ class UpdateEventUseCase:
             event.updated_at = now
             await uow.events.update(event)
             await uow.commit()
+        await self._sync.event_changed(event.id)
         return event.with_effective_status(now)
 
 

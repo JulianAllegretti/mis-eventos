@@ -10,7 +10,7 @@ from app.application.dto.queries import GetSpeakerQuery, ListSpeakersQuery
 from app.application.dto.read_models import Page
 from app.application.ports.outbound.clock import Clock
 from app.application.ports.outbound.unit_of_work import UnitOfWork, UnitOfWorkFactory
-from app.domain.errors import NotFound, ValidationFailed
+from app.domain.errors import Conflict, NotFound, ValidationFailed
 from app.domain.models.speaker import Speaker
 from app.domain.models.user import User
 from app.domain.services.permissions import MANAGERS, ensure_role
@@ -80,6 +80,8 @@ class DeleteSpeakerUseCase:
         _ensure_manager(cmd.actor)
         async with self._uow_factory() as uow:
             speaker = await _load(uow, cmd.speaker_id)
+            if await uow.sessions.count_for_speaker(speaker.id) > 0:
+                raise Conflict("El ponente tiene sesiones asignadas")
             await uow.speakers.delete(speaker.id)
             await uow.commit()
 
