@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     cache_ttl_seconds: int = Field(default=60, ge=1)
     # Intervalo de la tarea de cierre automático y reconciliación de cupos; 0 la desactiva.
     finish_job_interval_seconds: float = Field(default=60, ge=0)
+    # Intentos de login fallidos permitidos por ventana (ver ADR 0003 / TDD §7).
+    login_max_failures_per_email: int = Field(default=5, ge=1)
+    login_max_failures_per_ip: int = Field(default=20, ge=1)
+    login_window_seconds: int = Field(default=900, ge=1)
+    # Hashes de contraseña simultáneos (cada uno usa 64 MiB): protege memoria y CPU en ráfagas.
+    password_hash_concurrency: int = Field(default=4, ge=1)
     log_level: str = "INFO"
 
     @field_validator("allowed_origins", mode="before")

@@ -68,3 +68,18 @@ class AlreadyRegistered(Conflict):
 class ValidationFailed(DomainError):
     code = "validation_failed"
     default_message = "Datos inválidos"
+
+
+class TooManyAttempts(DomainError):
+    """Se superó el límite de intentos. `retry_after` son los segundos de espera."""
+
+    code = "too_many_attempts"
+    default_message = "Demasiados intentos. Intenta de nuevo más tarde"
+
+    def __init__(self, retry_after: int) -> None:
+        minutes = max(1, -(-retry_after // 60))  # redondea hacia arriba
+        super().__init__(
+            f"Demasiados intentos fallidos. Intenta de nuevo en {minutes} "
+            f"{'minuto' if minutes == 1 else 'minutos'}."
+        )
+        self.retry_after = retry_after

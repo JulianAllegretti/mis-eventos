@@ -6,6 +6,7 @@ from app.application.dto.queries import EventSearchCriteria, SearchEventsQuery
 from app.application.dto.read_models import Page
 from app.application.ports.outbound.cache import Cache
 from app.application.ports.outbound.clock import Clock
+from app.application.ports.outbound.metrics import Metrics
 from app.application.ports.outbound.unit_of_work import UnitOfWorkFactory
 from app.application.services.event_codec import decode_page, encode_page
 from app.application.services.event_sync import EVENTS_CACHE_GROUP
@@ -17,12 +18,18 @@ Q_MAX_LENGTH = 100
 
 class SearchEventsUseCase:
     def __init__(
-        self, uow_factory: UnitOfWorkFactory, clock: Clock, cache: Cache, cache_ttl_seconds: int
+        self,
+        uow_factory: UnitOfWorkFactory,
+        clock: Clock,
+        cache: Cache,
+        cache_ttl_seconds: int,
+        metrics: Metrics,
     ) -> None:
         self._uow_factory = uow_factory
         self._clock = clock
         self._cache = cache
         self._ttl = cache_ttl_seconds
+        self._metrics = metrics
 
     async def execute(self, query: SearchEventsQuery) -> Page[Event]:
         page, limit, offset = resolve_page(query.page, query.page_size)
@@ -41,6 +48,7 @@ class SearchEventsUseCase:
         if cache_key is not None:
             lookup = await self._cache.get(EVENTS_CACHE_GROUP, cache_key)
             version = lookup.version
+            self._metrics.cache_lookup("search", lookup.value is not None)
             if lookup.value is not None:
                 return self._with_effective_status(decode_page(lookup.value), now)
 

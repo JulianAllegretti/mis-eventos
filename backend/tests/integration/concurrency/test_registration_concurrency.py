@@ -43,6 +43,7 @@ from app.domain.models.registration import Registration
 from app.domain.models.session import Session
 from app.domain.models.user import Role, User
 from tests.factories import make_speaker, make_user
+from tests.fakes.in_memory import FakeMetrics
 
 START = datetime.now(UTC) + timedelta(days=10)
 
@@ -67,7 +68,7 @@ def sync(slots):
 
 @pytest.fixture
 def register(uow_factory, clock, slots, sync):
-    return RegisterToEventUseCase(uow_factory, clock, slots, sync)
+    return RegisterToEventUseCase(uow_factory, clock, slots, sync, FakeMetrics())
 
 
 async def _create_event(uow_factory, capacity) -> tuple[User, Event]:
@@ -217,7 +218,7 @@ class TestEventCapacityRace:
     ):
         _, event = await _create_event(uow_factory, 3)
         attendees = await _create_users(uow_factory, 20)
-        register = RegisterToEventUseCase(uow_factory, clock, slots, sync)
+        register = RegisterToEventUseCase(uow_factory, clock, slots, sync, FakeMetrics())
         cancel = CancelEventRegistrationUseCase(uow_factory, clock, slots, sync)
 
         async def wave():
@@ -275,7 +276,9 @@ class TestRedisFailureModes:
 
     async def test_a_dead_redis_does_not_stop_registrations(self, uow_factory, engine, clock):
         dead = RedisSlotCounter(create_redis("redis://127.0.0.1:1/0"))
-        register = RegisterToEventUseCase(uow_factory, clock, dead, EventSync(NullCache(), dead))
+        register = RegisterToEventUseCase(
+            uow_factory, clock, dead, EventSync(NullCache(), dead), FakeMetrics()
+        )
         _, event = await _create_event(uow_factory, 3)
         attendees = await _create_users(uow_factory, 20)
 
@@ -418,7 +421,7 @@ class TestSchedulerRace:
             for event in expired:
                 await uow.events.add(event)
             await uow.commit()
-        job = FinishExpiredEventsUseCase(uow_factory, clock, slots, sync)
+        job = FinishExpiredEventsUseCase(uow_factory, clock, slots, sync, FakeMetrics())
 
         batches = await asyncio.gather(*(job.execute() for _ in range(4)))
 

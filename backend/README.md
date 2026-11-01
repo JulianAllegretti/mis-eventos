@@ -58,3 +58,13 @@ docker compose --profile test run --rm backend-test alembic revision -m "descrip
 ## Auth
 
 El login fija la cookie `access_token` (`HttpOnly`, `SameSite=Lax`, `Secure` según `COOKIE_SECURE`) y no devuelve el token. Las peticiones que modifican datos y traen la cookie deben venir de un origen en `ALLOWED_ORIGINS`.
+
+## Observabilidad y límites
+
+- **Métricas:** `GET /metrics` (formato Prometheus; no se publica por nginx). Incluye HTTP (ruta como plantilla), inscripciones, filtro de cupos, cierre automático, logins y caché.
+- **Logs:** JSON a stdout con `request_id` (también en la cabecera `X-Request-ID`). Sin contraseñas, cookies, tokens ni correos.
+- **Salud:** `GET /health` (liveness) y `GET /health/ready` (PostgreSQL crítico, Redis degrada).
+- **Panel y logs centralizados:** ver `../observability/README.md` (`docker compose --profile observability up`).
+- **Límite de login:** 5 intentos fallidos por correo y 20 por IP cada 15 min → `429` con `Retry-After`. Configurable con `LOGIN_MAX_FAILURES_PER_EMAIL`, `LOGIN_MAX_FAILURES_PER_IP` y `LOGIN_WINDOW_SECONDS`.
+- **Hashing de contraseñas:** `PASSWORD_HASH_CONCURRENCY` (4) limita los hashes argon2 simultáneos.
+

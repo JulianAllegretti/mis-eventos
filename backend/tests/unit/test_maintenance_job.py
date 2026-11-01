@@ -2,6 +2,7 @@ import asyncio
 from uuid import uuid4
 
 from app.adapters.inbound.jobs.maintenance_job import MaintenanceJob
+from tests.fakes.in_memory import FakeMetrics
 
 
 class _Finish:
@@ -28,23 +29,25 @@ class _Reconcile:
 
 async def test_run_once_executes_both_tasks():
     finish, reconcile = _Finish([uuid4()]), _Reconcile()
-    await MaintenanceJob(finish, reconcile, interval_seconds=60).run_once()
+    await MaintenanceJob(finish, reconcile, interval_seconds=60, metrics=FakeMetrics()).run_once()
     assert (finish.calls, reconcile.calls) == (1, 1)
 
 
 async def test_a_failure_in_one_task_does_not_stop_the_other():
     finish, reconcile = _Finish(error=RuntimeError("PostgreSQL caído")), _Reconcile()
-    await MaintenanceJob(finish, reconcile, interval_seconds=60).run_once()  # no lanza
+    await MaintenanceJob(
+        finish, reconcile, interval_seconds=60, metrics=FakeMetrics()
+    ).run_once()  # no lanza
     assert reconcile.calls == 1
 
     finish, reconcile = _Finish(), _Reconcile(error=RuntimeError("Redis caído"))
-    await MaintenanceJob(finish, reconcile, interval_seconds=60).run_once()
+    await MaintenanceJob(finish, reconcile, interval_seconds=60, metrics=FakeMetrics()).run_once()
     assert finish.calls == 1
 
 
 async def test_the_loop_repeats_and_stops_cleanly():
     finish, reconcile = _Finish(), _Reconcile()
-    job = MaintenanceJob(finish, reconcile, interval_seconds=0.01)
+    job = MaintenanceJob(finish, reconcile, interval_seconds=0.01, metrics=FakeMetrics())
 
     job.start()
     job.start()  # idempotente: no crea una segunda tarea
@@ -59,7 +62,7 @@ async def test_the_loop_repeats_and_stops_cleanly():
 
 async def test_interval_zero_disables_the_loop():
     finish = _Finish()
-    job = MaintenanceJob(finish, _Reconcile(), interval_seconds=0)
+    job = MaintenanceJob(finish, _Reconcile(), interval_seconds=0, metrics=FakeMetrics())
     job.start()
     await asyncio.sleep(0.05)
     await job.stop()

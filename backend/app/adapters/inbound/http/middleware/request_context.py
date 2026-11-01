@@ -8,7 +8,11 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
+from app.adapters.inbound.http.middleware.route_template import UNMATCHED, route_template
+
 log = structlog.get_logger()
+# Sondeos periódicos (healthchecks y scrape de Prometheus): bajan a debug para no ahogar el log.
+_NOISY_PATHS = frozenset({"/health", "/health/ready", "/metrics"})
 _VALID_REQUEST_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
@@ -28,11 +32,13 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         duration_ms = round((time.perf_counter() - started) * 1000, 2)
 
         response.headers["X-Request-ID"] = request_id
-        route = request.scope.get("route")
-        log.info(
+        template = route_template(request.scope)
+        emit = log.debug if request.url.path in _NOISY_PATHS else log.info
+        emit(
             "http_request",
             method=request.method,
-            path=getattr(route, "path", request.url.path),
+            # Plantilla de la ruta; si no coincide con ninguna, la URL real ayuda a depurar los 404.
+            path=request.url.path if template == UNMATCHED else template,
             status=response.status_code,
             duration_ms=duration_ms,
             user_id=getattr(request.state, "user_id", None),

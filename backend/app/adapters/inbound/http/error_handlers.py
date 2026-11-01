@@ -11,6 +11,7 @@ from app.domain.errors import (
     Forbidden,
     NotAuthenticated,
     NotFound,
+    TooManyAttempts,
     ValidationFailed,
 )
 
@@ -38,6 +39,15 @@ async def _handle_domain_error(_: Request, exc: Exception) -> JSONResponse:
     )
 
 
+async def _handle_too_many_attempts(_: Request, exc: Exception) -> JSONResponse:
+    error = cast(TooManyAttempts, exc)
+    return JSONResponse(
+        status_code=429,
+        content=_body(error.code, error.message),
+        headers={"Retry-After": str(error.retry_after)},
+    )
+
+
 async def _handle_request_validation(_: Request, exc: Exception) -> JSONResponse:
     error = cast(RequestValidationError, exc)
     # Solo ubicación y mensaje: el valor recibido puede ser una contraseña y no se devuelve.
@@ -53,6 +63,7 @@ async def _handle_unexpected(request: Request, exc: Exception) -> JSONResponse:
 
 
 def register_error_handlers(app: FastAPI) -> None:
+    app.add_exception_handler(TooManyAttempts, _handle_too_many_attempts)
     app.add_exception_handler(DomainError, _handle_domain_error)
     app.add_exception_handler(RequestValidationError, _handle_request_validation)
     app.add_exception_handler(Exception, _handle_unexpected)

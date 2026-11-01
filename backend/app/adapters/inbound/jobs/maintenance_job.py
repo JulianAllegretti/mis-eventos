@@ -4,6 +4,7 @@ import contextlib
 import structlog
 
 from app.application.ports.inbound.maintenance import FinishExpiredEvents, ReconcileSlots
+from app.application.ports.outbound.metrics import Metrics
 
 log = structlog.get_logger()
 
@@ -19,10 +20,12 @@ class MaintenanceJob:
         finish_expired: FinishExpiredEvents,
         reconcile_slots: ReconcileSlots,
         interval_seconds: float,
+        metrics: Metrics,
     ) -> None:
         self._finish_expired = finish_expired
         self._reconcile_slots = reconcile_slots
         self._interval = interval_seconds
+        self._metrics = metrics
         self._task: asyncio.Task[None] | None = None
 
     async def run_once(self) -> None:
@@ -31,12 +34,16 @@ class MaintenanceJob:
             closed = await self._finish_expired.execute()
             if closed:
                 log.info("events_closed", count=len(closed), source="scheduler")
+            self._metrics.maintenance_run("finish_expired", ok=True)
         except Exception:
             log.exception("finish_expired_failed")
+            self._metrics.maintenance_run("finish_expired", ok=False)
         try:
             await self._reconcile_slots.execute()
+            self._metrics.maintenance_run("reconcile_slots", ok=True)
         except Exception:
             log.exception("reconcile_slots_failed")
+            self._metrics.maintenance_run("reconcile_slots", ok=False)
 
     def start(self) -> None:
         if self._task is None and self._interval > 0:

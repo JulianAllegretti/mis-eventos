@@ -71,3 +71,50 @@ def test_jwt_rejects_tokens_signed_with_none_algorithm():
     forged = jwt.encode({"sub": str(_user().id), "exp": 9999999999}, key="", algorithm="none")
     assert JwtTokenService(SECRET, 60, FixedClock()).decode(forged) is None
     assert ALGORITHM == "HS256"
+
+
+async def test_concurrent_hashes_are_capped_so_a_burst_cannot_exhaust_memory():
+    import asyncio
+    import time
+    from types import SimpleNamespace
+
+    hasher = Argon2PasswordHasher(max_concurrency=2)
+    running = peak = 0
+
+    def slow_hash(password: str) -> str:
+        nonlocal running, peak
+        running += 1
+        peak = max(peak, running)
+        time.sleep(0.05)
+        running -= 1
+        return f"hash:{password}"
+
+    hasher._hasher = SimpleNamespace(hash=slow_hash)  # type: ignore[assignment]
+
+    results = await asyncio.gather(*(hasher.hash(f"p{i}") for i in range(10)))
+
+    assert results == [f"hash:p{i}" for i in range(10)]  # todos terminan, en cola
+    assert peak == 2  # nunca más de 2 a la vez
+
+
+async def test_verify_shares_the_same_cap():
+    import asyncio
+    import time
+    from types import SimpleNamespace
+
+    hasher = Argon2PasswordHasher(max_concurrency=1)
+    running = peak = 0
+
+    def slow_verify(_hash: str, _password: str) -> bool:
+        nonlocal running, peak
+        running += 1
+        peak = max(peak, running)
+        time.sleep(0.03)
+        running -= 1
+        return True
+
+    hasher._hasher = SimpleNamespace(verify=slow_verify)  # type: ignore[assignment]
+
+    await asyncio.gather(*(hasher.verify("x", "h") for _ in range(6)))
+
+    assert peak == 1

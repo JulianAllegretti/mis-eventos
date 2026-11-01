@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, Request, Response, status
 
 from app.adapters.inbound.http.config import HttpConfig
 from app.adapters.inbound.http.cookies import clear_session_cookie, set_session_cookie
@@ -37,16 +37,18 @@ async def register(
 @router.post(
     "/login",
     response_model=UserResponse,
-    responses={401: {"model": ErrorResponse}},
+    responses={401: {"model": ErrorResponse}, 429: {"model": ErrorResponse}},
     summary="Inicia sesión: fija la cookie HttpOnly y no devuelve el token",
 )
 async def login(
     body: LoginRequest,
+    request: Request,
     response: Response,
     container: AppContainer = Depends(get_container),
     config: HttpConfig = Depends(get_http_config),
 ) -> UserResponse:
-    result = await container.login_user.execute(to_login_command(body))
+    client_ip = request.client.host if request.client else None
+    result = await container.login_user.execute(to_login_command(body, client_ip))
     set_session_cookie(response, result.token, result.expires_in, config.cookie_secure)
     return to_user_response(result.user)
 

@@ -32,6 +32,7 @@ from tests.factories import make_event, make_speaker, make_user
 from tests.fakes.in_memory import (
     FIXED_NOW,
     FakeCache,
+    FakeMetrics,
     FakeSlotCounter,
     FixedClock,
     InMemoryUnitOfWork,
@@ -68,7 +69,7 @@ def sync(cache, slots):
 
 @pytest.fixture
 def register(uow_factory, slots, sync):
-    return RegisterToEventUseCase(uow_factory, FixedClock(), slots, sync)
+    return RegisterToEventUseCase(uow_factory, FixedClock(), slots, sync, FakeMetrics())
 
 
 @pytest.fixture
@@ -201,7 +202,7 @@ class TestRegisterToEvent:
 
     async def test_works_without_redis(self, uow_factory, stores, organizer, sync):
         down = FakeSlotCounter(available=False)
-        use_case = RegisterToEventUseCase(uow_factory, FixedClock(), down, sync)
+        use_case = RegisterToEventUseCase(uow_factory, FixedClock(), down, sync, FakeMetrics())
         event, user = _event(stores, organizer, capacity=1), _user(stores)
 
         await use_case.execute(EventActionCommand(user, event.id))

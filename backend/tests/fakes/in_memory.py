@@ -546,3 +546,54 @@ class FakeCache:
 
     async def invalidate_group(self, group: str) -> None:
         self.versions[group] = self.versions.get(group, 0) + 1
+
+
+class FakeMetrics:
+    """Registra cada llamada para poder comprobar qué métricas se emiten."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, tuple[object, ...]]] = []
+
+    def _record(self, name: str, *args: object) -> None:
+        self.calls.append((name, args))
+
+    def count(self, name: str, *args: object) -> int:
+        return sum(1 for n, a in self.calls if n == name and a[: len(args)] == args)
+
+    def registration_attempt(self, result: str) -> None:
+        self._record("registration_attempt", result)
+
+    def slot_filter(self, result: str) -> None:
+        self._record("slot_filter", result)
+
+    def slot_compensation(self) -> None:
+        self._record("slot_compensation")
+
+    def event_closed(self, source: str, count: int = 1) -> None:
+        for _ in range(count):
+            self._record("event_closed", source)
+
+    def maintenance_run(self, task: str, ok: bool) -> None:
+        self._record("maintenance_run", task, ok)
+
+    def login_attempt(self, result: str) -> None:
+        self._record("login_attempt", result)
+
+    def cache_lookup(self, kind: str, hit: bool) -> None:
+        self._record("cache_lookup", kind, hit)
+
+
+class FakeRateLimiter:
+    """Cuenta fallos por clave; `retry_after` devuelve 60 s cuando se alcanza el límite."""
+
+    def __init__(self) -> None:
+        self.failures: dict[str, int] = {}
+
+    async def retry_after(self, key: str, limit: int) -> int:
+        return 60 if self.failures.get(key, 0) >= limit else 0
+
+    async def record_failure(self, key: str, window_seconds: int) -> None:
+        self.failures[key] = self.failures.get(key, 0) + 1
+
+    async def reset(self, key: str) -> None:
+        self.failures.pop(key, None)

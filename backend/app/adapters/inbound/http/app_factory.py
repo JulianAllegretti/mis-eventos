@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.adapters.inbound.http.config import HttpConfig
 from app.adapters.inbound.http.error_handlers import register_error_handlers
+from app.adapters.inbound.http.middleware.metrics import MetricsMiddleware
 from app.adapters.inbound.http.middleware.origin_check import OriginCheckMiddleware
 from app.adapters.inbound.http.middleware.request_context import RequestContextMiddleware
 from app.adapters.inbound.http.routers import (
@@ -14,6 +15,7 @@ from app.adapters.inbound.http.routers import (
     auth,
     events,
     health,
+    metrics,
     registrations,
     sessions,
     speakers,
@@ -43,6 +45,7 @@ def build_http_app(
     # Starlette aplica los middlewares de último a primero: CORS queda más externo.
     app.add_middleware(OriginCheckMiddleware, allowed_origins=config.allowed_origins)
     app.add_middleware(RequestContextMiddleware)
+    app.add_middleware(MetricsMiddleware, registry=config.metrics_registry)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(config.allowed_origins),
@@ -53,6 +56,7 @@ def build_http_app(
     )
 
     app.include_router(health.router)
+    app.include_router(metrics.router)
     app.include_router(auth.router, prefix=API_PREFIX)
     app.include_router(events.router, prefix=API_PREFIX)
     app.include_router(speakers.router, prefix=API_PREFIX)

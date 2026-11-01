@@ -1,6 +1,7 @@
 from uuid import UUID
 
 from app.application.ports.outbound.clock import Clock
+from app.application.ports.outbound.metrics import Metrics
 from app.application.ports.outbound.slot_counter import SlotCounter
 from app.application.ports.outbound.unit_of_work import UnitOfWorkFactory
 from app.application.services.event_sync import EventSync
@@ -10,12 +11,18 @@ class FinishExpiredEventsUseCase:
     """Cierre automático (ADR 0008): publicados vencidos → finished (source=scheduler)."""
 
     def __init__(
-        self, uow_factory: UnitOfWorkFactory, clock: Clock, slots: SlotCounter, sync: EventSync
+        self,
+        uow_factory: UnitOfWorkFactory,
+        clock: Clock,
+        slots: SlotCounter,
+        sync: EventSync,
+        metrics: Metrics,
     ) -> None:
         self._uow_factory = uow_factory
         self._clock = clock
         self._slots = slots
         self._sync = sync
+        self._metrics = metrics
 
     async def execute(self) -> list[UUID]:
         async with self._uow_factory() as uow:
@@ -24,6 +31,7 @@ class FinishExpiredEventsUseCase:
         for event_id in closed:
             await self._slots.invalidate(event_id)
         if closed:
+            self._metrics.event_closed("scheduler", len(closed))
             await self._sync.counts_changed()
         return closed
 

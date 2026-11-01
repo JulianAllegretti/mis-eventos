@@ -4,6 +4,7 @@ from uuid import UUID
 
 from app.application.dto.commands import EventActionCommand
 from app.application.ports.outbound.clock import Clock
+from app.application.ports.outbound.metrics import Metrics
 from app.application.ports.outbound.unit_of_work import UnitOfWorkFactory
 from app.application.services.event_sync import EventSync
 from app.application.use_cases.events._access import load_managed_event
@@ -16,10 +17,13 @@ Transition = Callable[[Event, UUID, datetime], None]
 class _ChangeStatus:
     """Aplica una transición del ciclo de vida, la persiste y sincroniza caché y cupos."""
 
-    def __init__(self, uow_factory: UnitOfWorkFactory, clock: Clock, sync: EventSync) -> None:
+    def __init__(
+        self, uow_factory: UnitOfWorkFactory, clock: Clock, sync: EventSync, metrics: Metrics
+    ) -> None:
         self._uow_factory = uow_factory
         self._clock = clock
         self._sync = sync
+        self._metrics = metrics
 
     async def _run(self, cmd: EventActionCommand, transition: Transition) -> Event:
         now = self._clock.now()
@@ -39,9 +43,13 @@ class PublishEventUseCase(_ChangeStatus):
 
 class FinishEventUseCase(_ChangeStatus):
     async def execute(self, cmd: EventActionCommand) -> Event:
-        return await self._run(cmd, event_lifecycle.finish)
+        event = await self._run(cmd, event_lifecycle.finish)
+        self._metrics.event_closed("manual")
+        return event
 
 
 class CancelEventUseCase(_ChangeStatus):
     async def execute(self, cmd: EventActionCommand) -> Event:
-        return await self._run(cmd, event_lifecycle.cancel)
+        event = await self._run(cmd, event_lifecycle.cancel)
+        self._metrics.event_closed("manual")
+        return event

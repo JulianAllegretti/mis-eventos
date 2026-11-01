@@ -3,6 +3,7 @@ from uuid import uuid4
 import pytest
 
 from app.application.dto.commands import LoginCommand, RegisterUserCommand
+from app.application.dto.policies import LoginRateLimit
 from app.application.use_cases.admin.ensure_admin_user import EnsureAdminUserUseCase
 from app.application.use_cases.auth.get_current_user import GetCurrentUserUseCase
 from app.application.use_cases.auth.login_user import LoginUserUseCase
@@ -15,7 +16,9 @@ from app.domain.errors import (
 )
 from app.domain.models.user import Role
 from tests.fakes.in_memory import (
+    FakeMetrics,
     FakePasswordHasher,
+    FakeRateLimiter,
     FakeTokenService,
     FixedClock,
     make_uow_factory,
@@ -39,7 +42,14 @@ def register(uow_factory):
 
 @pytest.fixture
 def login(uow_factory):
-    return LoginUserUseCase(uow_factory, FakePasswordHasher(), FakeTokenService())
+    return LoginUserUseCase(
+        uow_factory,
+        FakePasswordHasher(),
+        FakeTokenService(),
+        FakeRateLimiter(),
+        LoginRateLimit(),
+        FakeMetrics(),
+    )
 
 
 @pytest.fixture

@@ -18,6 +18,7 @@ from app.domain.models.user import Role
 from tests.factories import make_event, make_user
 from tests.fakes.in_memory import (
     FakeCache,
+    FakeMetrics,
     FakeSlotCounter,
     FixedClock,
     InMemoryUnitOfWork,
@@ -72,7 +73,7 @@ class TestReadCache:
     async def test_public_event_is_cached_and_drafts_are_not(
         self, uow_factory, clock, cache, stores, owner
     ):
-        get = GetEventUseCase(uow_factory, clock, cache, 60)
+        get = GetEventUseCase(uow_factory, clock, cache, 60, FakeMetrics())
         public = _published(stores, owner)
         draft = make_event(owner.id)
         stores.events[draft.id] = draft
@@ -88,7 +89,7 @@ class TestReadCache:
     async def test_cached_event_still_reports_the_effective_status(
         self, uow_factory, clock, cache, stores, owner
     ):
-        get = GetEventUseCase(uow_factory, clock, cache, 60)
+        get = GetEventUseCase(uow_factory, clock, cache, 60, FakeMetrics())
         event = _published(stores, owner, starts_in=timedelta(hours=1), lasts=timedelta(hours=2))
         assert (await get.execute(GetEventQuery(None, event.id))).status is EventStatus.PUBLISHED
 
@@ -100,7 +101,7 @@ class TestReadCache:
     async def test_search_is_cached_per_query_and_never_for_mine(
         self, uow_factory, clock, cache, stores, owner
     ):
-        search = SearchEventsUseCase(uow_factory, clock, cache, 60)
+        search = SearchEventsUseCase(uow_factory, clock, cache, 60, FakeMetrics())
         _published(stores, owner, name="Python")
         _published(stores, owner, name="Rust")
 
@@ -117,7 +118,7 @@ class TestReadCache:
     async def test_writes_invalidate_the_cache(
         self, uow_factory, clock, cache, sync, stores, owner
     ):
-        get = GetEventUseCase(uow_factory, clock, cache, 60)
+        get = GetEventUseCase(uow_factory, clock, cache, 60, FakeMetrics())
         event = _published(stores, owner, name="Original")
         await get.execute(GetEventQuery(None, event.id))  # llena la caché
 
@@ -130,8 +131,8 @@ class TestReadCache:
     async def test_registrations_refresh_the_displayed_slots(
         self, uow_factory, clock, cache, sync, slots, stores, owner
     ):
-        get = GetEventUseCase(uow_factory, clock, cache, 60)
-        register = RegisterToEventUseCase(uow_factory, clock, slots, sync)
+        get = GetEventUseCase(uow_factory, clock, cache, 60, FakeMetrics())
+        register = RegisterToEventUseCase(uow_factory, clock, slots, sync, FakeMetrics())
         event = _published(stores, owner, capacity=5)
         assert (await get.execute(GetEventQuery(None, event.id))).registered_count == 0
 
@@ -160,7 +161,9 @@ class TestFinishExpiredEvents:
         stores.events[draft.id] = draft
         slots.counters[expired.id] = 3
 
-        closed = await FinishExpiredEventsUseCase(uow_factory, clock, slots, sync).execute()
+        closed = await FinishExpiredEventsUseCase(
+            uow_factory, clock, slots, sync, FakeMetrics()
+        ).execute()
 
         assert closed == [expired.id]
         assert expired.status is EventStatus.FINISHED
@@ -178,7 +181,7 @@ class TestFinishExpiredEvents:
         self, uow_factory, clock, slots, sync, cache, stores, owner
     ):
         _published(stores, owner, starts_in=-timedelta(days=2))
-        job = FinishExpiredEventsUseCase(uow_factory, clock, slots, sync)
+        job = FinishExpiredEventsUseCase(uow_factory, clock, slots, sync, FakeMetrics())
 
         assert len(await job.execute()) == 1
         assert await job.execute() == []
@@ -192,7 +195,12 @@ class TestFinishExpiredEvents:
         event.closed_at, event.closed_by_id = clock.now(), owner.id
         event.closed_source = ClosedSource.MANUAL
 
-        assert await FinishExpiredEventsUseCase(uow_factory, clock, slots, sync).execute() == []
+        assert (
+            await FinishExpiredEventsUseCase(
+                uow_factory, clock, slots, sync, FakeMetrics()
+            ).execute()
+            == []
+        )
         assert event.closed_source is ClosedSource.MANUAL
 
 

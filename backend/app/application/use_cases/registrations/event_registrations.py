@@ -5,11 +5,12 @@ from app.application.dto.paging import resolve_page
 from app.application.dto.queries import ListAttendeesQuery, ListMyRegistrationsQuery
 from app.application.dto.read_models import AttendeeView, MyRegistration, Page, SessionView
 from app.application.ports.outbound.clock import Clock
+from app.application.ports.outbound.metrics import Metrics
 from app.application.ports.outbound.slot_counter import SlotCounter, SlotResult
 from app.application.ports.outbound.unit_of_work import UnitOfWorkFactory
 from app.application.services.event_sync import EventSync
 from app.application.use_cases.events._access import load_managed_event
-from app.domain.errors import AlreadyRegistered, EventFull, NotFound
+from app.domain.errors import AlreadyRegistered, DomainError, EventFull, NotFound
 from app.domain.models.registration import Registration
 from app.domain.services.permissions import can_view_event
 from app.domain.services.scheduling import ensure_registrable
@@ -24,16 +25,41 @@ class RegisterToEventUseCase:
     """
 
     def __init__(
-        self, uow_factory: UnitOfWorkFactory, clock: Clock, slots: SlotCounter, sync: EventSync
+        self,
+        uow_factory: UnitOfWorkFactory,
+        clock: Clock,
+        slots: SlotCounter,
+        sync: EventSync,
+        metrics: Metrics,
     ) -> None:
         self._uow_factory = uow_factory
         self._clock = clock
         self._slots = slots
         self._sync = sync
+        self._metrics = metrics
 
     async def execute(self, cmd: EventActionCommand) -> Registration:
+        try:
+            registration = await self._register(cmd)
+        except EventFull:
+            self._metrics.registration_attempt("full")
+            raise
+        except AlreadyRegistered:
+            self._metrics.registration_attempt("duplicate")
+            raise
+        except DomainError:
+            self._metrics.registration_attempt("rejected")  # no existe, cerrado, etc.
+            raise
+        except Exception:
+            self._metrics.registration_attempt("error")
+            raise
+        self._metrics.registration_attempt("ok")
+        return registration
+
+    async def _register(self, cmd: EventActionCommand) -> Registration:
         # 1) Colapsa los clics dobles antes de reservar cupo (ver SlotCounter.claim).
         if not await self._slots.claim(cmd.event_id, cmd.actor.id):
+            self._metrics.slot_filter("duplicate_claim")
             raise AlreadyRegistered("Ya tienes una inscripción en curso para este evento")
         try:
             registration = await self._reserve_and_persist(cmd)
@@ -52,6 +78,7 @@ class RegisterToEventUseCase:
         except BaseException:
             if holds_slot:
                 await self._slots.release(cmd.event_id)
+                self._metrics.slot_compensation()
             raise
 
     async def _acquire_slot(self, cmd: EventActionCommand) -> bool:
@@ -61,7 +88,9 @@ class RegisterToEventUseCase:
             await self._slots.initialize(cmd.event_id, await self._available_slots(cmd))
             result = await self._slots.try_acquire(cmd.event_id)
         if result is SlotResult.FULL:
+            self._metrics.slot_filter("rejected")
             raise EventFull()
+        self._metrics.slot_filter("allowed" if result is SlotResult.ALLOWED else "bypassed")
         return result is SlotResult.ALLOWED
 
     async def _available_slots(self, cmd: EventActionCommand) -> int:

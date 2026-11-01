@@ -7,8 +7,8 @@ def to_register_command(body: RegisterRequest) -> RegisterUserCommand:
     return RegisterUserCommand(email=body.email, password=body.password, full_name=body.full_name)
 
 
-def to_login_command(body: LoginRequest) -> LoginCommand:
-    return LoginCommand(email=body.email, password=body.password)
+def to_login_command(body: LoginRequest, client_ip: str | None = None) -> LoginCommand:
+    return LoginCommand(email=body.email, password=body.password, client_ip=client_ip)
 
 
 def to_user_response(user: User) -> UserResponse:

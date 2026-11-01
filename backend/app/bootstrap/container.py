@@ -1,16 +1,21 @@
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
-from app.adapters.outbound.cache.null_adapters import NullCache, NullSlotCounter
+from prometheus_client import CollectorRegistry
+
+from app.adapters.outbound.cache.null_adapters import NullCache, NullRateLimiter, NullSlotCounter
 from app.adapters.outbound.cache.redis_cache import RedisCache
 from app.adapters.outbound.cache.redis_client import RedisHealthProbe, create_redis
+from app.adapters.outbound.cache.redis_rate_limiter import RedisRateLimiter
 from app.adapters.outbound.cache.redis_slot_counter import RedisSlotCounter
+from app.adapters.outbound.observability.prometheus_metrics import PrometheusMetrics
 from app.adapters.outbound.persistence.database import create_engine, create_session_factory
 from app.adapters.outbound.persistence.health import SqlHealthProbe
 from app.adapters.outbound.persistence.unit_of_work import SqlUnitOfWork
 from app.adapters.outbound.security.argon2_hasher import Argon2PasswordHasher
 from app.adapters.outbound.security.jwt_token_service import JwtTokenService
 from app.adapters.outbound.system.system_clock import SystemClock
+from app.application.dto.policies import LoginRateLimit
 from app.application.ports.inbound.admin import EnsureAdminUser, ListUsers, UpdateUser
 from app.application.ports.inbound.auth import GetCurrentUser, LoginUser, RegisterUser
 from app.application.ports.inbound.events import (
@@ -49,6 +54,8 @@ from app.application.ports.inbound.speakers import (
 from app.application.ports.outbound.cache import Cache
 from app.application.ports.outbound.clock import Clock
 from app.application.ports.outbound.health import HealthProbe
+from app.application.ports.outbound.metrics import Metrics
+from app.application.ports.outbound.rate_limiter import RateLimiter
 from app.application.ports.outbound.security import PasswordHasher, TokenService
 from app.application.ports.outbound.slot_counter import SlotCounter
 from app.application.ports.outbound.unit_of_work import UnitOfWork, UnitOfWorkFactory
@@ -135,6 +142,7 @@ class Container:
     cancel_session_registration: CancelSessionRegistration
     finish_expired_events: FinishExpiredEvents
     reconcile_slots: ReconcileSlots
+    metrics: Metrics
     _closers: list[Callable[[], Awaitable[None]]] = field(default_factory=list)
 
     async def aclose(self) -> None:
@@ -150,6 +158,9 @@ def wire_use_cases(
     probes: list[HealthProbe],
     slots: SlotCounter,
     cache: Cache,
+    metrics: Metrics,
+    limiter: RateLimiter,
+    login_policy: LoginRateLimit | None = None,
     cache_ttl_seconds: int = 60,
     closers: list[Callable[[], Awaitable[None]]] | None = None,
 ) -> Container:
@@ -157,18 +168,20 @@ def wire_use_cases(
     sync = EventSync(cache, slots)
     return Container(
         register_user=RegisterUserUseCase(uow_factory, hasher, clock),
-        login_user=LoginUserUseCase(uow_factory, hasher, tokens),
+        login_user=LoginUserUseCase(
+            uow_factory, hasher, tokens, limiter, login_policy or LoginRateLimit(), metrics
+        ),
         get_current_user=GetCurrentUserUseCase(uow_factory, tokens),
         ensure_admin=EnsureAdminUserUseCase(uow_factory, hasher, clock),
         check_readiness=CheckReadinessUseCase(probes),
         create_event=CreateEventUseCase(uow_factory, clock),
         update_event=UpdateEventUseCase(uow_factory, clock, sync),
-        get_event=GetEventUseCase(uow_factory, clock, cache, cache_ttl_seconds),
-        search_events=SearchEventsUseCase(uow_factory, clock, cache, cache_ttl_seconds),
+        get_event=GetEventUseCase(uow_factory, clock, cache, cache_ttl_seconds, metrics),
+        search_events=SearchEventsUseCase(uow_factory, clock, cache, cache_ttl_seconds, metrics),
         delete_event=DeleteEventUseCase(uow_factory, sync),
-        publish_event=PublishEventUseCase(uow_factory, clock, sync),
-        finish_event=FinishEventUseCase(uow_factory, clock, sync),
-        cancel_event=CancelEventUseCase(uow_factory, clock, sync),
+        publish_event=PublishEventUseCase(uow_factory, clock, sync, metrics),
+        finish_event=FinishEventUseCase(uow_factory, clock, sync, metrics),
+        cancel_event=CancelEventUseCase(uow_factory, clock, sync, metrics),
         create_speaker=CreateSpeakerUseCase(uow_factory, clock),
         update_speaker=UpdateSpeakerUseCase(uow_factory),
         delete_speaker=DeleteSpeakerUseCase(uow_factory),
@@ -180,19 +193,20 @@ def wire_use_cases(
         update_session=UpdateSessionUseCase(uow_factory, clock, sync),
         delete_session=DeleteSessionUseCase(uow_factory, clock, sync),
         list_event_sessions=ListEventSessionsUseCase(uow_factory),
-        register_to_event=RegisterToEventUseCase(uow_factory, clock, slots, sync),
+        register_to_event=RegisterToEventUseCase(uow_factory, clock, slots, sync, metrics),
         cancel_event_registration=CancelEventRegistrationUseCase(uow_factory, clock, slots, sync),
         list_my_registrations=ListMyRegistrationsUseCase(uow_factory),
         list_event_attendees=ListEventAttendeesUseCase(uow_factory),
         register_to_session=RegisterToSessionUseCase(uow_factory, clock, sync),
         cancel_session_registration=CancelSessionRegistrationUseCase(uow_factory, clock, sync),
-        finish_expired_events=FinishExpiredEventsUseCase(uow_factory, clock, slots, sync),
+        finish_expired_events=FinishExpiredEventsUseCase(uow_factory, clock, slots, sync, metrics),
         reconcile_slots=ReconcileSlotsUseCase(uow_factory, clock, slots),
+        metrics=metrics,
         _closers=closers or [],
     )
 
 
-def build_container(settings: Settings) -> Container:
+def build_container(settings: Settings, registry: CollectorRegistry) -> Container:
     """Único lugar que instancia adaptadores concretos y los inyecta en los casos de uso."""
     engine = create_engine(settings.database_url)
     session_factory = create_session_factory(engine)
@@ -204,9 +218,10 @@ def build_container(settings: Settings) -> Container:
     closers: list[Callable[[], Awaitable[None]]] = [engine.dispose]
     slots: SlotCounter = NullSlotCounter()
     cache: Cache = NullCache()
+    limiter: RateLimiter = NullRateLimiter()
     if settings.redis_url:
         redis = create_redis(settings.redis_url)
-        slots, cache = RedisSlotCounter(redis), RedisCache(redis)
+        slots, cache, limiter = RedisSlotCounter(redis), RedisCache(redis), RedisRateLimiter(redis)
         probes.append(RedisHealthProbe(redis))
         closers.append(redis.aclose)
 
@@ -214,11 +229,18 @@ def build_container(settings: Settings) -> Container:
     return wire_use_cases(
         uow_factory=uow_factory,
         clock=clock,
-        hasher=Argon2PasswordHasher(),
+        hasher=Argon2PasswordHasher(settings.password_hash_concurrency),
         tokens=JwtTokenService(settings.jwt_secret, settings.jwt_expire_minutes, clock),
         probes=probes,
         slots=slots,
         cache=cache,
+        metrics=PrometheusMetrics(registry),
+        limiter=limiter,
+        login_policy=LoginRateLimit(
+            max_failures_per_email=settings.login_max_failures_per_email,
+            max_failures_per_ip=settings.login_max_failures_per_ip,
+            window_seconds=settings.login_window_seconds,
+        ),
         cache_ttl_seconds=settings.cache_ttl_seconds,
         closers=closers,
     )

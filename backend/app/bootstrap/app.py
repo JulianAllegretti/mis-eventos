@@ -8,6 +8,7 @@ from app.adapters.inbound.http.app_factory import build_http_app
 from app.adapters.inbound.http.config import HttpConfig
 from app.adapters.inbound.jobs.maintenance_job import MaintenanceJob
 from app.adapters.outbound.observability.logging import configure_logging
+from app.adapters.outbound.observability.prometheus_metrics import create_registry
 from app.bootstrap.container import Container, build_container
 from app.bootstrap.settings import Settings
 
@@ -19,11 +20,12 @@ def create_app(settings: Settings | None = None, container: Container | None = N
     los tests entregan uno con fakes y no tocan PostgreSQL ni Redis."""
     settings = settings or Settings()
     configure_logging(settings.log_level)
+    registry = create_registry()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         owned = container is None
-        active = container if container is not None else build_container(settings)
+        active = container if container is not None else build_container(settings, registry)
         app.state.container = active
         if owned and settings.admin_email and settings.admin_password:
             created = await active.ensure_admin.execute(
@@ -35,6 +37,7 @@ def create_app(settings: Settings | None = None, container: Container | None = N
             active.finish_expired_events,
             active.reconcile_slots,
             settings.finish_job_interval_seconds if owned else 0,
+            active.metrics,
         )
         job.start()
         try:
@@ -47,6 +50,7 @@ def create_app(settings: Settings | None = None, container: Container | None = N
     config = HttpConfig(
         cookie_secure=settings.cookie_secure,
         allowed_origins=tuple(settings.allowed_origins),
+        metrics_registry=registry,
     )
     app = build_http_app(config, lifespan=lifespan)
     if container is not None:

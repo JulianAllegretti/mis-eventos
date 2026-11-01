@@ -22,6 +22,7 @@ from tests.factories import make_event, make_user
 from tests.fakes.in_memory import (
     FIXED_NOW,
     FakeCache,
+    FakeMetrics,
     FakeSlotCounter,
     FixedClock,
     make_uow_factory,
@@ -178,7 +179,7 @@ class TestGetAndSearch:
         )
         events[event.id] = event
 
-        result = await GetEventUseCase(uow_factory, clock, cache, 60).execute(
+        result = await GetEventUseCase(uow_factory, clock, cache, 60, FakeMetrics()).execute(
             GetEventQuery(None, event.id)
         )
 
@@ -188,7 +189,7 @@ class TestGetAndSearch:
         event = make_event(make_user(Role.ORGANIZER).id)
         events[event.id] = event
         with pytest.raises(NotFound):
-            await GetEventUseCase(uow_factory, clock, cache, 60).execute(
+            await GetEventUseCase(uow_factory, clock, cache, 60, FakeMetrics()).execute(
                 GetEventQuery(None, event.id)
             )
 
@@ -205,7 +206,7 @@ class TestGetAndSearch:
             event = make_event(owner.id, name=name, status=status)
             events[event.id] = event
 
-        page = await SearchEventsUseCase(uow_factory, clock, cache, 60).execute(
+        page = await SearchEventsUseCase(uow_factory, clock, cache, 60, FakeMetrics()).execute(
             SearchEventsQuery(viewer=None, q="python")
         )
 
@@ -221,7 +222,7 @@ class TestGetAndSearch:
         theirs = make_event(other.id, name="Borrador ajeno")
         events.update({mine.id: mine, theirs.id: theirs})
 
-        page = await SearchEventsUseCase(uow_factory, clock, cache, 60).execute(
+        page = await SearchEventsUseCase(uow_factory, clock, cache, 60, FakeMetrics()).execute(
             SearchEventsQuery(viewer=me, mine=True)
         )
 
@@ -237,7 +238,7 @@ class TestGetAndSearch:
                 starts_in=timedelta(days=days),
             )
             events[event.id] = event
-        search = SearchEventsUseCase(uow_factory, clock, cache, 60)
+        search = SearchEventsUseCase(uow_factory, clock, cache, 60, FakeMetrics())
 
         first = await search.execute(SearchEventsQuery(None, page=1, page_size=2))
         second = await search.execute(SearchEventsQuery(None, page=2, page_size=2))
@@ -253,7 +254,7 @@ class TestGetAndSearch:
         )
         live = make_event(owner.id, name="Vigente", status=EventStatus.PUBLISHED)
         events.update({expired.id: expired, live.id: live})
-        search = SearchEventsUseCase(uow_factory, clock, cache, 60)
+        search = SearchEventsUseCase(uow_factory, clock, cache, 60, FakeMetrics())
 
         finished = await search.execute(SearchEventsQuery(None, status=EventStatus.FINISHED))
         published = await search.execute(SearchEventsQuery(None, status=EventStatus.PUBLISHED))
@@ -273,7 +274,7 @@ class TestGetAndSearch:
     )
     async def test_invalid_queries_are_rejected(self, uow_factory, clock, query, cache):
         with pytest.raises(ValidationFailed):
-            await SearchEventsUseCase(uow_factory, clock, cache, 60).execute(query)
+            await SearchEventsUseCase(uow_factory, clock, cache, 60, FakeMetrics()).execute(query)
 
 
 class TestStatusChangesAndDelete:
@@ -284,19 +285,19 @@ class TestStatusChangesAndDelete:
         cmd = EventActionCommand(owner, event.id)
 
         assert (
-            await PublishEventUseCase(uow_factory, clock, sync).execute(cmd)
+            await PublishEventUseCase(uow_factory, clock, sync, FakeMetrics()).execute(cmd)
         ).status is EventStatus.PUBLISHED
-        finished = await FinishEventUseCase(uow_factory, clock, sync).execute(cmd)
+        finished = await FinishEventUseCase(uow_factory, clock, sync, FakeMetrics()).execute(cmd)
         assert finished.status is EventStatus.FINISHED
         assert finished.closed_by_id == owner.id
         with pytest.raises(InvalidTransition):
-            await CancelEventUseCase(uow_factory, clock, sync).execute(cmd)
+            await CancelEventUseCase(uow_factory, clock, sync, FakeMetrics()).execute(cmd)
 
     async def test_non_owner_cannot_change_status(self, uow_factory, clock, events, sync):
         event = make_event(make_user(Role.ORGANIZER).id, status=EventStatus.PUBLISHED)
         events[event.id] = event
         with pytest.raises(Forbidden):
-            await CancelEventUseCase(uow_factory, clock, sync).execute(
+            await CancelEventUseCase(uow_factory, clock, sync, FakeMetrics()).execute(
                 EventActionCommand(make_user(Role.ORGANIZER), event.id)
             )
 

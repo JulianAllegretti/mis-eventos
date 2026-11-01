@@ -18,6 +18,7 @@ class RegisterUserCommand:
 class LoginCommand:
     email: str
     password: str
+    client_ip: str | None = None  # para limitar intentos por origen
 
 
 # --- Eventos ---

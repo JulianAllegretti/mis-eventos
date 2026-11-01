@@ -1,6 +1,7 @@
 from app.application.dto.queries import GetEventQuery
 from app.application.ports.outbound.cache import Cache
 from app.application.ports.outbound.clock import Clock
+from app.application.ports.outbound.metrics import Metrics
 from app.application.ports.outbound.unit_of_work import UnitOfWorkFactory
 from app.application.services.event_codec import decode_event, encode_event
 from app.application.services.event_sync import EVENTS_CACHE_GROUP
@@ -10,16 +11,23 @@ from app.domain.models.event import Event, EventStatus
 
 class GetEventUseCase:
     def __init__(
-        self, uow_factory: UnitOfWorkFactory, clock: Clock, cache: Cache, cache_ttl_seconds: int
+        self,
+        uow_factory: UnitOfWorkFactory,
+        clock: Clock,
+        cache: Cache,
+        cache_ttl_seconds: int,
+        metrics: Metrics,
     ) -> None:
         self._uow_factory = uow_factory
         self._clock = clock
         self._cache = cache
         self._ttl = cache_ttl_seconds
+        self._metrics = metrics
 
     async def execute(self, query: GetEventQuery) -> Event:
         key = f"event:{query.event_id}"
         lookup = await self._cache.get(EVENTS_CACHE_GROUP, key)
+        self._metrics.cache_lookup("event", lookup.value is not None)
         if lookup.value is not None:
             # Solo se cachean eventos públicos, por eso un acierto no requiere revisar permisos.
             return decode_event(lookup.value).with_effective_status(self._clock.now())

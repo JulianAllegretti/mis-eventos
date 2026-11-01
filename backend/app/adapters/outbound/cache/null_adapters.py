@@ -38,3 +38,14 @@ class NullCache:
 
     async def invalidate_group(self, group: str) -> None:
         return None
+
+
+class NullRateLimiter:
+    async def retry_after(self, key: str, limit: int) -> int:
+        return 0
+
+    async def record_failure(self, key: str, window_seconds: int) -> None:
+        return None
+
+    async def reset(self, key: str) -> None:
+        return None
