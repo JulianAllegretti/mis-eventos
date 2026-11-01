@@ -28,3 +28,6 @@ El PRD pide React/Vue/Angular, router, manejador de estado, cliente HTTP, compon
 - shadcn/ui acelera la UI y da accesibilidad (foco, teclado, ARIA) de base, pero añade dependencias (Tailwind, Radix, react-hook-form, zod, sonner) y obliga a revisar el código copiado cuando se actualiza un componente.
 - El setup de Vitest necesita polyfills de jsdom para Radix (`ResizeObserver`, `matchMedia`, `hasPointerCapture`, `scrollIntoView`).
 - Las pruebas del frontend deben simular la sesión con MSW (respuesta de `/auth/me`), no con un token en el almacenamiento.
+- **TypeScript 6.0.x, no 7:** `typescript-eslint` aún exige `typescript <6.1`; se fija la serie 6.0 para no perder el linter en lugar de forzar la instalación.
+- **shadcn/ui escrito a mano:** se versionan los componentes (Tailwind 4 + Radix) en `components/ui/` en vez de ejecutar la CLI, para no depender de su registro remoto y poder revisarlos.
+- **Sin librería de consultas (TanStack Query):** Zustand y un hook pequeño (`useAsyncData`) cubren las necesidades con menos dependencias; la caché de lectura está en el backend.

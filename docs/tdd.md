@@ -486,6 +486,8 @@ frontend/
     └── test/                # setup de Vitest, handlers de MSW
 ```
 
+> **Nota de implementación:** la estructura final del frontend, las rutas, el estado y las decisiones se documentan en `frontend/README.md`, que es la referencia vigente. Diferencias respecto al borrador de arriba: se añadieron `stores/registrationsStore.ts` (mis inscripciones), `hooks/useAsyncData.ts` y `usePageState.ts` (carga de datos sin `setState` en efectos), los módulos de `api/` son uno por recurso, y las páginas de formulario usan `react-hook-form` + `zod` con los avisos de `sonner` (esquina inferior derecha para no tapar la navegación).
+
 ### 6.2 Rutas
 
 | Ruta | Página | Acceso |
