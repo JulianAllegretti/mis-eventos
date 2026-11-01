@@ -25,6 +25,7 @@ Fuente: `docs/prd.pdf`. Este documento fija las reglas de negocio y resuelve los
 - Login establece un JWT de acceso en una cookie `HttpOnly` con expiración configurable (por defecto 60 min); el token no se devuelve en el cuerpo. Logout borra la cookie y `GET /auth/me` devuelve la sesión actual. **[S]** Sin refresh token.
 - Rutas de escritura y de perfil requieren token válido; la lectura de eventos publicados es pública.
 - Mensajes de error de login genéricos (no revelan si el email existe).
+- Límite de intentos fallidos: tras 5 fallos por correo (o 20 por IP) en 15 minutos, el login responde 429 con `Retry-After`, incluso con la contraseña correcta; se desbloquea solo al vencer la ventana (ADR 0003).
 
 ### 3.2 Eventos
 - Campos: nombre, descripción, ubicación, fecha/hora de inicio y fin, capacidad (entero ≥ 1), estado, organizador (creador).

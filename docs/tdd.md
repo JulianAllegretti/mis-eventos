@@ -528,7 +528,7 @@ Todas las páginas se cargan con `React.lazy` + `Suspense` (code splitting por r
 | CSRF | `SameSite=Lax` + verificación de `Origin` |
 | Escalada de privilegios | Rol recargado desde la BD; comprobación de rol y propiedad en `permissions.py`; registro público solo crea `attendee` |
 | Enumeración de usuarios | Mensajes de login genéricos |
-| Fuerza bruta | Límite de intentos de login por IP y por email (contador en Redis, p. ej. 5 por minuto) |
+| Fuerza bruta | Límite de intentos **fallidos** de login: 5 por correo y 20 por IP en 15 min (Redis), 429 con `Retry-After`; hashing argon2 con concurrencia acotada (ADR 0003) |
 | Secretos | Solo variables de entorno; `.env` fuera de Git |
 | Fugas en logs | Sin contraseñas, cookies, tokens ni emails; solo `user_id` |
 | Contenedores | Imágenes multi-stage, usuario no root |
@@ -552,6 +552,8 @@ Todas las páginas se cargan con `React.lazy` + `Suspense` (code splitting por r
 | `ADMIN_EMAIL`, `ADMIN_PASSWORD` | Seed del primer admin |
 | `CACHE_TTL_SECONDS` | TTL de la caché (60) |
 | `FINISH_JOB_INTERVAL_SECONDS` | Intervalo de la tarea de cierre (60) |
+| `LOGIN_MAX_FAILURES_PER_EMAIL`, `LOGIN_MAX_FAILURES_PER_IP`, `LOGIN_WINDOW_SECONDS` | Límite de intentos de login fallidos (5 / 20 / 900) |
+| `PASSWORD_HASH_CONCURRENCY` | Hashes argon2 simultáneos (4) |
 | `LOG_LEVEL` | Nivel de logs |
 | `GRAFANA_ADMIN_USER`, `GRAFANA_ADMIN_PASSWORD` | Solo perfil `observability` |
 

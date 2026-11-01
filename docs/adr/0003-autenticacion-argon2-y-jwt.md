@@ -27,3 +27,12 @@ Se requiere registro, login y protección de rutas. Un comentario en el PRD sugi
 - El token no es accesible desde JavaScript, lo que reduce el impacto de un XSS, pero obliga a defender CSRF (middleware de `Origin`) y a configurar cookies y CORS con cuidado.
 - Los tests del backend y del frontend deben cubrir la cookie, el logout y el rechazo por `Origin` inválido.
 - La documentación Swagger debe declarar el esquema de seguridad como `apiKey` en cookie.
+
+## Límite de intentos de login (implementado)
+- Se cuentan solo los intentos **fallidos**, por **correo** (5 en 15 min) y por **IP** (20 en 15 min); los valores son configurables (`LOGIN_MAX_FAILURES_PER_EMAIL`, `LOGIN_MAX_FAILURES_PER_IP`, `LOGIN_WINDOW_SECONDS`).
+- Al superarlo, `POST /auth/login` responde **429** con `Retry-After` y el cuerpo estándar de error, **incluso si la contraseña es correcta**, y no abre sesión.
+- Se limita por correo existan o no las cuentas, para que el bloqueo no revele cuáles existen. Un acierto borra los fallos de esa cuenta; los intentos bloqueados no amplían el bloqueo.
+- Contadores en Redis con ventana fija (`INCR` + `EXPIRE` atómicos en Lua). Si Redis no responde, no se bloquea a nadie (falla abierto): es defensa en profundidad, la barrera principal es argon2id.
+- **IP real del cliente:** nginx **sobrescribe** `X-Forwarded-For` con `$remote_addr` (no lo concatena) y el backend confía en esa cabecera (`FORWARDED_ALLOW_IPS`); un cliente no puede falsear su origen. El puerto 8000 solo se publica en `127.0.0.1`.
+- **Compromiso asumido:** quien conozca el correo de otra persona puede bloquear su acceso durante la ventana (denegación de servicio dirigida). Se acepta a cambio de frenar la fuerza bruta; el desbloqueo es automático al vencer la ventana, sin intervención de nadie.
+- **Concurrencia del hashing:** `PASSWORD_HASH_CONCURRENCY` (4 por defecto) limita los hashes argon2 simultáneos (64 MiB cada uno) para que una ráfaga de altas o de logins no agote memoria ni CPU; las peticiones esperan su turno.
