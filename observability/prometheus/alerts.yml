@@ -1,0 +1,47 @@
+# Reglas de alerta. No hay Alertmanager en este stack: se consultan en http://localhost:9090/alerts
+# y en Grafana. Sirven como contrato de qué se considera "mal".
+groups:
+  - name: mis-eventos
+    rules:
+      - alert: BackendCaido
+        expr: up{job="backend"} == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "El backend no responde a Prometheus"
+
+      - alert: TasaDeErrores5xxAlta
+        expr: |
+          sum(rate(miseventos_http_requests_total{status=~"5.."}[5m]))
+            / clamp_min(sum(rate(miseventos_http_requests_total[5m])), 1e-9) > 0.05
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "Más del 5 % de las peticiones terminan en error del servidor"
+
+      - alert: TareaPeriodicaSinEjecutarse
+        expr: time() - miseventos_maintenance_last_success_timestamp_seconds > 300
+        for: 2m
+        labels: { severity: warning }
+        annotations:
+          summary: "La tarea {{ $labels.task }} no termina bien desde hace más de 5 minutos"
+          description: "Con eventos vencidos sin cerrar, se muestran como finalizados por estado efectivo, pero no se persiste el cierre."
+
+      - alert: TareaPeriodicaFallando
+        expr: increase(miseventos_maintenance_runs_total{result="error"}[10m]) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "La tarea {{ $labels.task }} ha fallado en los últimos 10 minutos"
+
+      - alert: PicoDeLoginsBloqueados
+        expr: increase(miseventos_login_attempts_total{result="rate_limited"}[10m]) > 20
+        labels: { severity: warning }
+        annotations:
+          summary: "Muchos intentos de login bloqueados: posible fuerza bruta"
+
+      - alert: RedisNoDisponible
+        expr: increase(miseventos_slot_filter_total{result="bypassed"}[5m]) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "El filtro de cupos no está usando Redis (PostgreSQL decide solo)"
+          description: "La corrección se mantiene, pero toda la contención cae sobre la fila del evento."

@@ -1,0 +1,53 @@
+// Recolecta los logs de los contenedores de Docker y los envía a Loki.
+// Necesita acceso de solo lectura al socket de Docker: úsalo solo en desarrollo local.
+
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "containers" {
+  targets = []
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+}
+
+loki.source.docker "containers" {
+  host          = "unix:///var/run/docker.sock"
+  targets       = discovery.docker.containers.targets
+  relabel_rules = discovery.relabel.containers.rules
+  forward_to    = [loki.process.backend.receiver]
+}
+
+// El backend escribe JSON (structlog): se extrae `level` como etiqueta (pocos valores).
+// request_id, path, status, user_id… quedan dentro de la línea y se consultan con `| json`,
+// no como etiquetas, para no disparar la cardinalidad del índice.
+loki.process "backend" {
+  stage.match {
+    selector = "{service=\"backend\"}"
+
+    stage.json {
+      expressions = { level = "level" }
+    }
+
+    stage.labels {
+      values = { level = "" }
+    }
+  }
+
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
